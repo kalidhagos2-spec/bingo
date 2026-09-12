@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tg-bingo-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tgbingo
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  webapp:
+    build: ./webapp
+    container_name: tg-bingo-webapp
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    container_name: tg-bingo-server
+    # BOT_TOKEN / WEBAPP_URL come from bot/.env; gateway credentials from server/.env.
+    # With no gateway credentials the server runs the built-in sandbox gateway.
+    env_file:
+      - path: ./bot/.env
+        required: false
+      - path: ./server/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  bot:
+    build: ./bot
+    container_name: tg-bingo-bot
+    # Copy bot/.env.example to bot/.env and set BOT_TOKEN and WEBAPP_URL.
+    env_file:
+      - path: ./bot/.env
+        required: false
+    environment:
+      API_URL: http://server:3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
+    depends_on:
+      postgres:
+        condition: service_healthy
+      webapp:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

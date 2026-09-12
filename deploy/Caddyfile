@@ -1,0 +1,8 @@
+# Reverse proxy with automatic HTTPS (Let's Encrypt) for a single-VPS deployment.
+# DOMAIN comes from the environment (see docker-compose.prod.yml). Point the DNS A record
+# of that domain at the server before starting; Caddy obtains the certificate on first hit.
+{$DOMAIN} {
+    encode gzip zstd
+    # nginx inside the webapp container serves the Mini App and proxies /api + /socket.io
+    reverse_proxy webapp:80
+}

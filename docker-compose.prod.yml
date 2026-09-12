@@ -1,0 +1,53 @@
+# Production overlay for a single public server (VPS):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Adds Caddy on ports 80/443 with automatic HTTPS for $DOMAIN, stops exposing the webapp's
+# plain-http port 8080 to the internet, and pins the production URLs for the server and bot.
+# Required env (put them in a `.env` file next to this file, or export them):
+#   DOMAIN=bingo.example.com          the public hostname (DNS A record -> this server)
+#   BOT_TOKEN=...                     from @BotFather (also read by the bot via bot/.env)
+#   POSTGRES_PASSWORD=...             a real password for the bundled Postgres
+#   ADMIN_TOKEN=...                   operator access to /api/admin
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: tg-bingo-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN to your public hostname}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - webapp
+    restart: unless-stopped
+
+  webapp:
+    ports: !reset []
+
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+
+  server:
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/tgbingo
+      PUBLIC_URL: https://${DOMAIN}
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      DEV_ALLOW_ANON: "false"
+
+  bot:
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/tgbingo
+      BOT_TOKEN: ${BOT_TOKEN}
+      WEBAPP_URL: https://${DOMAIN}
+      API_URL: http://server:3000
+
+volumes:
+  caddy-data:
+  caddy-config:

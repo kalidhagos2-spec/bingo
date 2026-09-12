@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+bot/data/users.json
+.DS_Store
+Claude outputs/
+deploy/.env

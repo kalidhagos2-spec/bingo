@@ -1,0 +1,862 @@
+{
+  "wallets": {
+    "1": {
+      "balance": 532
+    },
+    "9000000000001": {
+      "balance": 100
+    },
+    "9000000000002": {
+      "balance": 1078
+    }
+  },
+  "transactions": [
+    {
+      "ref": "TGBMTRPECCJ2F1D22",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRPECCJ2F1D22",
+      "providerRef": "MOCK-1788813544515",
+      "createdAt": "2026-09-07T20:39:04.194Z",
+      "updatedAt": "2026-09-07T20:39:04.516Z"
+    },
+    {
+      "ref": "TGBMTRPF50X70FB64",
+      "userId": 1,
+      "method": "game",
+      "amount": -10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room P8XD",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T20:39:41.361Z",
+      "updatedAt": "2026-09-07T20:39:41.361Z"
+    },
+    {
+      "ref": "TGBMTRPF5Q6E96E2F",
+      "userId": 1,
+      "method": "game",
+      "amount": 10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room P8XD",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T20:39:42.270Z",
+      "updatedAt": "2026-09-07T20:39:42.270Z"
+    },
+    {
+      "ref": "TGBMTRQJNNXC6796D",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRQJNNXC6796D",
+      "providerRef": "MOCK-1788815474011",
+      "createdAt": "2026-09-07T21:11:11.757Z",
+      "updatedAt": "2026-09-07T21:11:14.012Z"
+    },
+    {
+      "ref": "TGBMTRS0O5F69E80A",
+      "userId": 1,
+      "method": "game",
+      "amount": -10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room 4RRR",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T21:52:25.155Z",
+      "updatedAt": "2026-09-07T21:52:25.155Z"
+    },
+    {
+      "ref": "TGBMTRS0PQ2888BF9",
+      "userId": 1,
+      "method": "game",
+      "amount": 10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room 4RRR",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T21:52:27.194Z",
+      "updatedAt": "2026-09-07T21:52:27.194Z"
+    },
+    {
+      "ref": "TGBMTRSFBYI8ADEB1",
+      "userId": 9000000000001,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRSFBYI8ADEB1",
+      "providerRef": "MOCK-1788818631176",
+      "createdAt": "2026-09-07T22:03:49.194Z",
+      "updatedAt": "2026-09-07T22:03:51.176Z"
+    },
+    {
+      "ref": "TGBMTRSG6P04A8FBA",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": -20,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room 64JB",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:04:29.028Z",
+      "updatedAt": "2026-09-07T22:04:29.028Z"
+    },
+    {
+      "ref": "TGBMTRSGH1T66B432",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": 20,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room 64JB",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:04:42.449Z",
+      "updatedAt": "2026-09-07T22:04:42.449Z"
+    },
+    {
+      "ref": "TGBMTRSGSGU18FBED",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": -50,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room CMMK",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:04:57.246Z",
+      "updatedAt": "2026-09-07T22:04:57.246Z"
+    },
+    {
+      "ref": "TGBMTRSHXUOA6494D",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": 50,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room CMMK",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:05:50.880Z",
+      "updatedAt": "2026-09-07T22:05:50.880Z"
+    },
+    {
+      "ref": "TGBMTRT0ZNX63D47F",
+      "userId": 1,
+      "method": "game",
+      "amount": -10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room 3N3V",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:20:39.693Z",
+      "updatedAt": "2026-09-07T22:20:39.693Z"
+    },
+    {
+      "ref": "TGBMTRT1PE7B545E0",
+      "userId": 1,
+      "method": "game",
+      "amount": 10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room 3N3V",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:21:13.039Z",
+      "updatedAt": "2026-09-07T22:21:13.039Z"
+    },
+    {
+      "ref": "TGBMTRT4V5FC2EF20",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRT4V5FC2EF20",
+      "providerRef": "MOCK-1788819821140",
+      "createdAt": "2026-09-07T22:23:40.467Z",
+      "updatedAt": "2026-09-07T22:23:41.141Z",
+      "fee": 2,
+      "credited": 98
+    },
+    {
+      "ref": "TGBMTRTD37N395F58",
+      "type": "withdraw",
+      "userId": 1,
+      "method": "telebirr",
+      "account": "+251911000000",
+      "amount": -60,
+      "fee": 0,
+      "payout": 60,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Cash out to telebirr +251911000000",
+      "checkoutUrl": null,
+      "providerRef": "TB-PAYOUT-1",
+      "createdAt": "2026-09-07T22:30:04.163Z",
+      "updatedAt": "2026-09-07T22:30:22.326Z"
+    },
+    {
+      "ref": "TGBMTRTDQCZ9F7063",
+      "type": "withdraw",
+      "userId": 1,
+      "method": "boa",
+      "account": "1000123456",
+      "amount": -50,
+      "fee": 0,
+      "payout": 50,
+      "currency": "ETB",
+      "status": "cancelled",
+      "note": "Cash out to boa 1000123456",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:30:34.163Z",
+      "updatedAt": "2026-09-07T22:30:36.092Z",
+      "reason": "Cancelled by player"
+    },
+    {
+      "ref": "TGBMTRTHZJGBF896B",
+      "type": "withdraw",
+      "userId": 1,
+      "method": "cbebirr",
+      "account": "0911222333",
+      "amount": -55,
+      "fee": 0,
+      "payout": 55,
+      "currency": "ETB",
+      "status": "rejected",
+      "note": "Cash out to cbebirr 0911222333",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T22:33:52.683Z",
+      "updatedAt": "2026-09-07T22:34:24.264Z",
+      "reason": "Account could not be verified (test)"
+    },
+    {
+      "ref": "TGBMTRUIC80BD2026",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRUIC80BD2026",
+      "providerRef": "MOCK-1788822130331",
+      "createdAt": "2026-09-07T23:02:08.736Z",
+      "updatedAt": "2026-09-07T23:02:10.332Z",
+      "fee": 2,
+      "credited": 98
+    },
+    {
+      "ref": "TGBMTRUTANB77EF15",
+      "type": "deposit",
+      "userId": 1,
+      "method": "boa",
+      "amount": 200,
+      "currency": "ETB",
+      "status": "paid",
+      "providerRef": "FT26090812345",
+      "account": "1000123456",
+      "note": "Transfer via boa, receipt FT26090812345",
+      "verified": "operator",
+      "checkoutUrl": null,
+      "createdAt": "2026-09-07T23:10:39.910Z",
+      "updatedAt": "2026-09-07T23:11:42.105Z",
+      "fee": 4,
+      "credited": 196
+    },
+    {
+      "ref": "TGBMTRUTXXX7FBD9B",
+      "type": "deposit",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "rejected",
+      "providerRef": "DI78JCK84K",
+      "account": "0911000000",
+      "note": "Transfer via telebirr, receipt DI78JCK84K",
+      "verified": null,
+      "checkoutUrl": null,
+      "createdAt": "2026-09-07T23:11:10.101Z",
+      "updatedAt": "2026-09-07T23:11:44.090Z",
+      "autoCheck": "amount 100.00 not on receipt",
+      "reason": "Not found on our Telebirr statement"
+    },
+    {
+      "ref": "TGBMTRV0VCHD74646",
+      "userId": 1,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "pending",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTRV0VCHD74646",
+      "providerRef": null,
+      "createdAt": "2026-09-07T23:16:33.329Z",
+      "updatedAt": "2026-09-07T23:16:33.331Z"
+    },
+    {
+      "ref": "TGBMTRVHWIZFA0918",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": -10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room 9K7P",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T23:29:48.010Z",
+      "updatedAt": "2026-09-07T23:29:48.010Z"
+    },
+    {
+      "ref": "TGBMTRVI5HLB707BA",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": 10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room 9K7P",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T23:29:59.625Z",
+      "updatedAt": "2026-09-07T23:29:59.625Z"
+    },
+    {
+      "ref": "TGBMTRVIBQ1A10802",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": -10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Stake for room MMYS",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T23:30:07.705Z",
+      "updatedAt": "2026-09-07T23:30:07.705Z"
+    },
+    {
+      "ref": "TGBMTRVINDU1C973D",
+      "userId": 9000000000001,
+      "method": "game",
+      "amount": 10,
+      "currency": "ETB",
+      "status": "paid",
+      "note": "Refund for room MMYS",
+      "checkoutUrl": null,
+      "providerRef": null,
+      "createdAt": "2026-09-07T23:30:22.818Z",
+      "updatedAt": "2026-09-07T23:30:22.818Z"
+    },
+    {
+      "ref": "TGBMTSLJ0BX65F584",
+      "userId": 9000000000002,
+      "method": "telebirr",
+      "amount": 100,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTSLJ0BX65F584",
+      "providerRef": "MOCK-1788867511376",
+      "createdAt": "2026-09-08T11:38:29.613Z",
+      "updatedAt": "2026-09-08T11:38:31.377Z",
+      "fee": 2,
+      "credited": 98
+    },
+    {
+      "ref": "TGBMTSLJP97117EC7",
+      "userId": 9000000000002,
+      "method": "cbebirr",
+      "amount": 500,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTSLJP97117EC7",
+      "providerRef": "MOCK-1788867543905",
+      "createdAt": "2026-09-08T11:39:01.915Z",
+      "updatedAt": "2026-09-08T11:39:03.905Z",
+      "fee": 10,
+      "credited": 490
+    },
+    {
+      "ref": "TGBMTSLK0UE7D5C3A",
+      "userId": 9000000000002,
+      "method": "boa",
+      "amount": 500,
+      "currency": "ETB",
+      "status": "paid",
+      "checkoutUrl": "/api/payments/mock/checkout?ref=TGBMTSLK0UE7D5C3A",
+      "providerRef": "MOCK-1788867558604",
+      "createdAt": "2026-09-08T11:39:16.934Z",
+      "updatedAt": "2026-09-08T11:39:18.604Z",
+      "fee": 10,
+      "credited": 490
+    },
+    {
+      "ref": "TGBMTSLOMPJA8AE5A",
+      "type": "deposit",
+      "userId": 9000000000002,
+      "method": "telebirr",
+      "amount": 1056,
+      "currency": "ETB",
+      "status": "pending",
+      "providerRef": "Y6Y890",
+      "account": "0900000000",
+      "note": "Transfer via telebirr, receipt Y6Y890",
+      "verified": null,
+      "checkoutUrl": null,
+      "createdAt": "2026-09-08T11:42:51.895Z",
+      "updatedAt": "2026-09-08T11:42:51.897Z",
+      "autoCheck": "not a Telebirr transaction id"
+    }
+  ],
+  "profiles": {
+    "1": {
+      "name": "Abebe K",
+      "phone": "+0922333444",
+      "username": "dev",
+      "firstName": "Dev",
+      "lastName": "User",
+      "signedUpAt": "2026-09-07T20:00:00.000Z",
+      "updatedAt": "2026-09-07T21:52:21.093Z",
+      "stats": {
+        "games": 0,
+        "wins": 0,
+        "winnings": 0
+      },
+      "email": "abebe@example.com",
+      "economy": {
+        "coins": 80,
+        "bonus": {
+          "lastClaimDay": "2026-09-07",
+          "streak": 1,
+          "claims": 1
+        },
+        "missions": {
+          "day": "2026-09-07",
+          "progress": {
+            "bonus": 1
+          },
+          "claimed": [
+            "bonus"
+          ]
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": [
+          {
+            "at": "2026-09-07T21:46:01.177Z",
+            "delta": 30,
+            "note": "Mission · Claim the daily bonus"
+          },
+          {
+            "at": "2026-09-07T21:45:27.765Z",
+            "delta": 50,
+            "note": "Daily bonus · day 1"
+          }
+        ]
+      },
+      "suspended": null
+    },
+    "501": {
+      "name": null,
+      "phone": null,
+      "email": null,
+      "username": null,
+      "firstName": null,
+      "lastName": null,
+      "signedUpAt": null,
+      "updatedAt": null,
+      "stats": {
+        "games": 1,
+        "wins": 1,
+        "winnings": 0
+      },
+      "economy": {
+        "coins": 50,
+        "bonus": {
+          "lastClaimDay": null,
+          "streak": 0,
+          "claims": 0
+        },
+        "missions": {
+          "day": "2026-09-07",
+          "progress": {
+            "marks": 24,
+            "games": 1,
+            "wins": 1
+          },
+          "claimed": []
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": [
+          {
+            "at": "2026-09-07T22:46:49.355Z",
+            "delta": 50,
+            "note": "Won Free Bingo"
+          }
+        ]
+      }
+    },
+    "502": {
+      "name": null,
+      "phone": null,
+      "email": null,
+      "username": null,
+      "firstName": null,
+      "lastName": null,
+      "signedUpAt": null,
+      "updatedAt": null,
+      "stats": {
+        "games": 1,
+        "wins": 0,
+        "winnings": 0
+      },
+      "economy": {
+        "coins": 0,
+        "bonus": {
+          "lastClaimDay": null,
+          "streak": 0,
+          "claims": 0
+        },
+        "missions": {
+          "day": "2026-09-07",
+          "progress": {
+            "games": 1
+          },
+          "claimed": []
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": []
+      }
+    },
+    "9000000000000": {
+      "name": null,
+      "phone": null,
+      "email": "sara@example.com",
+      "username": null,
+      "firstName": null,
+      "lastName": null,
+      "signedUpAt": null,
+      "updatedAt": "2026-09-07T21:45:03.319Z",
+      "stats": {
+        "games": 0,
+        "wins": 0,
+        "winnings": 0
+      },
+      "economy": {
+        "coins": 0,
+        "bonus": {
+          "lastClaimDay": null,
+          "streak": 0,
+          "claims": 0
+        },
+        "missions": {
+          "day": "2026-09-07",
+          "progress": {},
+          "claimed": []
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": []
+      },
+      "suspended": null
+    },
+    "9000000000001": {
+      "name": "yabsirahanne",
+      "phone": "+093434345",
+      "email": "yabsirahanne@gmail.com",
+      "username": null,
+      "firstName": null,
+      "lastName": null,
+      "signedUpAt": "2026-09-07T22:03:39.389Z",
+      "updatedAt": "2026-09-07T22:03:39.390Z",
+      "stats": {
+        "games": 0,
+        "wins": 0,
+        "winnings": 0
+      },
+      "economy": {
+        "coins": 50,
+        "bonus": {
+          "lastClaimDay": "2026-09-07",
+          "streak": 1,
+          "claims": 1
+        },
+        "missions": {
+          "day": "2026-09-07",
+          "progress": {
+            "bonus": 1
+          },
+          "claimed": []
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": [
+          {
+            "at": "2026-09-07T22:02:52.469Z",
+            "delta": 50,
+            "note": "Daily bonus · day 1"
+          }
+        ]
+      }
+    },
+    "9000000000002": {
+      "name": null,
+      "phone": null,
+      "email": "test@gmail.com",
+      "username": null,
+      "firstName": null,
+      "lastName": null,
+      "signedUpAt": null,
+      "updatedAt": "2026-09-08T11:38:03.129Z",
+      "stats": {
+        "games": 0,
+        "wins": 0,
+        "winnings": 0
+      },
+      "economy": {
+        "coins": 0,
+        "bonus": {
+          "lastClaimDay": null,
+          "streak": 0,
+          "claims": 0
+        },
+        "missions": {
+          "day": "2026-09-08",
+          "progress": {},
+          "claimed": []
+        },
+        "items": {
+          "shield": 0,
+          "doubler": 0
+        },
+        "themes": {
+          "owned": [
+            "classic"
+          ],
+          "selected": "classic"
+        },
+        "coinLog": []
+      }
+    }
+  },
+  "emailAccounts": {
+    "sara@example.com": 9000000000000,
+    "yabsirahanne@gmail.com": 9000000000001,
+    "test@gmail.com": 9000000000002
+  },
+  "loginCodes": {},
+  "sessions": {
+    "5824b110734caf6264672597106755421ab150d2fe65d26e00213091753ea622": {
+      "userId": 9000000000000,
+      "email": "sara@example.com",
+      "createdAt": 1788817503319,
+      "expiresAt": 1791409503319
+    },
+    "00efd5844a348cc4199a7724b1dbc66ffced7a54d311d1ce2ab68da8aceddfab": {
+      "userId": 1,
+      "email": "abebe@example.com",
+      "createdAt": 1788817522911,
+      "expiresAt": 1791409522911
+    },
+    "226b0a91018de71426fbacb0029190042f1ab53765382db19e5e430dbb39c3ce": {
+      "userId": 1,
+      "email": "abebe@example.com",
+      "createdAt": 1788817941093,
+      "expiresAt": 1791409941093
+    },
+    "8d2499daceed2ccd903fe66c123da52ee0fc03824838f33c9e6d2aa4f7b412a7": {
+      "userId": 9000000000001,
+      "email": "yabsirahanne@gmail.com",
+      "createdAt": 1788818544458,
+      "expiresAt": 1791410544458
+    },
+    "eae81c1e8b43b87c84cf3ff2ea1d2f0909af9f38b6272481cff1ffa2b10a1160": {
+      "userId": 9000000000002,
+      "email": "test@gmail.com",
+      "createdAt": 1788867483129,
+      "expiresAt": 1791459483129
+    }
+  },
+  "nextEmailId": 9000000000003,
+  "house": {
+    "balance": 30,
+    "entries": [
+      {
+        "at": "2026-09-07T22:23:41.141Z",
+        "type": "deposit",
+        "userId": 1,
+        "ref": "TGBMTRT4V5FC2EF20",
+        "method": "telebirr",
+        "amount": 100,
+        "fee": 2
+      },
+      {
+        "at": "2026-09-07T23:02:10.332Z",
+        "type": "deposit",
+        "userId": 1,
+        "ref": "TGBMTRUIC80BD2026",
+        "method": "telebirr",
+        "amount": 100,
+        "fee": 2
+      },
+      {
+        "at": "2026-09-07T23:11:42.103Z",
+        "type": "deposit",
+        "userId": 1,
+        "ref": "TGBMTRUTANB77EF15",
+        "method": "boa",
+        "amount": 200,
+        "fee": 4
+      },
+      {
+        "at": "2026-09-08T11:38:31.377Z",
+        "type": "deposit",
+        "userId": 9000000000002,
+        "ref": "TGBMTSLJ0BX65F584",
+        "method": "telebirr",
+        "amount": 100,
+        "fee": 2
+      },
+      {
+        "at": "2026-09-08T11:39:03.905Z",
+        "type": "deposit",
+        "userId": 9000000000002,
+        "ref": "TGBMTSLJP97117EC7",
+        "method": "cbebirr",
+        "amount": 500,
+        "fee": 10
+      },
+      {
+        "at": "2026-09-08T11:39:18.604Z",
+        "type": "deposit",
+        "userId": 9000000000002,
+        "ref": "TGBMTSLK0UE7D5C3A",
+        "method": "boa",
+        "amount": 500,
+        "fee": 10
+      }
+    ]
+  },
+  "rounds": [
+    {
+      "at": "2026-09-07T22:46:49.355Z",
+      "room": "S4WY",
+      "round": 1,
+      "stake": 0,
+      "players": [
+        {
+          "id": 501,
+          "name": "Guest 501",
+          "cartela": 11,
+          "marked": 24
+        },
+        {
+          "id": 502,
+          "name": "Guest 502",
+          "cartela": 22,
+          "marked": 0
+        }
+      ],
+      "winner": {
+        "id": 501,
+        "name": "Guest 501",
+        "cartela": 11,
+        "full": true,
+        "line": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      "prize": 0,
+      "stakes": 0,
+      "houseTake": 0,
+      "numbersCalled": 75,
+      "durationMs": 30227,
+      "freeCoins": 50
+    }
+  ],
+  "settings": {
+    "telebirrAccount": "0900000000",
+    "telebirrName": "Demo Bingo (test)",
+    "boaAccount": "1000000000000",
+    "boaName": "Demo Bingo PLC (test)"
+  },
+  "announcements": [
+    {
+      "id": "d329e32acc14",
+      "text": "Double coins on Free Bingo tonight from 8pm!",
+      "level": "promo",
+      "createdAt": "2026-09-07T22:58:48.580Z",
+      "expiresAt": "2026-09-07T23:58:48.580Z",
+      "active": true,
+      "by": "operator",
+      "telegram": null
+    },
+    {
+      "id": "650ea4310283",
+      "text": "Maintenance tonight 23:00–23:30, tables will close.",
+      "level": "warning",
+      "createdAt": "2026-09-07T22:59:26.121Z",
+      "expiresAt": null,
+      "active": false,
+      "by": "operator",
+      "telegram": null,
+      "removedAt": "2026-09-07T22:59:28.085Z"
+    }
+  ]
+}
