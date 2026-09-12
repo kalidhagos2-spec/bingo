@@ -16,6 +16,12 @@ DOMAIN="${2:?usage: deploy-vps.sh user@host domain}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/tg-bingo}"
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 
+echo "→ checking Docker on $HOST"
+if ! ssh "$HOST" "command -v docker >/dev/null && docker compose version >/dev/null 2>&1"; then
+  echo "→ Docker Engine + Compose plugin not found; installing with the official script (get.docker.com)"
+  ssh "$HOST" "curl -fsSL https://get.docker.com | sh"
+fi
+
 echo "→ syncing $HERE to $HOST:$REMOTE_DIR"
 ssh "$HOST" "mkdir -p '$REMOTE_DIR'"
 rsync -az --delete \
@@ -24,8 +30,10 @@ rsync -az --delete \
 
 # Production env: created once, never overwritten (it holds the generated DB password).
 if ! ssh "$HOST" "test -f '$REMOTE_DIR/.env'"; then
-  read -r -p "BOT_TOKEN (from @BotFather): " BOT_TOKEN
-  read -r -p "ADMIN_TOKEN (any long random string; blank = admin dashboard disabled): " ADMIN_TOKEN
+  # BOT_TOKEN / ADMIN_TOKEN may be passed as environment variables (non-interactive use);
+  # otherwise they are asked for once.
+  [ -n "${BOT_TOKEN:-}" ] || read -r -p "BOT_TOKEN (from @BotFather): " BOT_TOKEN
+  [ -n "${ADMIN_TOKEN+x}" ] || read -r -p "ADMIN_TOKEN (any long random string; blank = admin dashboard disabled): " ADMIN_TOKEN
   PG_PASS="$(openssl rand -hex 24)"
   ssh "$HOST" "cat > '$REMOTE_DIR/.env' <<EOF
 DOMAIN=$DOMAIN
