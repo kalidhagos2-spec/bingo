@@ -2,7 +2,8 @@
  * Operator dashboard: a single self-contained HTML page (no build step) that talks to the
  * /api/admin endpoints with the admin token typed once and kept in localStorage.
  */
-export function dashboardPage({ currency }) {
+export function dashboardPage({ currency, payout = null, gateway = false }) {
+  const payoutText = payout?.account ? `${payout.method ?? ''} ${payout.account}${payout.name ? ` (${payout.name})` : ''}`.trim() : 'the house account';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Telegram Bingo · Admin</title>
 <style>
@@ -55,6 +56,7 @@ export function dashboardPage({ currency }) {
       <h2>Withdrawal requests
         <span><select id="wstatus"><option value="pending">Pending</option><option value="paid">Paid</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option><option value="all">All</option></select></span>
       </h2>
+      <p class="muted" style="margin:0 0 8px">Send each approved payout from <b>${payoutText}</b> to the player's account in the row, then mark it paid with the transaction id.</p>
       <table><thead><tr><th>When</th><th>Ref</th><th>Player</th><th>Method</th><th>Account</th><th class="right">Amount</th><th class="right">Fee</th><th class="right">Payout</th><th>Status</th><th>Provider ref / reason</th><th></th></tr></thead><tbody id="wrows"></tbody></table>
     </section>
     <section id="tab-deposits" style="display:none">
@@ -62,7 +64,7 @@ export function dashboardPage({ currency }) {
         <span><select id="dstatus"><option value="pending">Pending</option><option value="paid">Confirmed</option><option value="rejected">Rejected</option><option value="all">All</option></select></span>
       </h2>
       <p class="muted" style="margin:0 0 8px">Check the transaction id against your Telebirr / bank statement, then confirm (credits the wallet minus the deposit fee) or reject.</p>
-      <table><thead><tr><th>Submitted</th><th>Ref</th><th>Player</th><th>Method</th><th>Transaction id</th><th class="right">Amount</th><th>Status</th><th>Check</th><th></th></tr></thead><tbody id="drows"></tbody></table>
+      <table><thead><tr><th>Submitted</th><th>Ref</th><th>Player</th><th>Method</th><th>Paid into</th><th>Transaction id</th><th class="right">Amount</th><th>Status</th><th>Check</th><th></th></tr></thead><tbody id="drows"></tbody></table>
     </section>
     <section id="tab-players" style="display:none">
       <h2>Players <span><input id="pq" placeholder="search id, name, phone, email" style="width:240px"> <span class="muted" id="pcount"></span></span></h2>
@@ -90,8 +92,8 @@ export function dashboardPage({ currency }) {
       <table><thead><tr><th>Posted</th><th>Level</th><th>Message</th><th>Expires</th><th>Status</th><th>Telegram</th><th></th></tr></thead><tbody id="arows"></tbody></table>
     </section>
     <section id="tab-settings" style="display:none">
-      <h2>Settings <span><button class="btn" id="sreset">Reset to .env defaults</button> <button class="btn ok" id="ssave">Save changes</button></span></h2>
-      <p class="muted" style="margin:0 0 8px">Changes apply immediately to new deposits, cash-outs and tables, and to the fee and pacing of tables already open. A running round finishes on the rules it started with. Values are stored on the server and survive restarts; a reset returns to the values in <code>server/.env</code>.</p>
+      <h2>Settings <span><button class="btn" id="sreset">Reset to defaults</button> <button class="btn ok" id="ssave">Save changes</button></span></h2>
+      <p class="muted" style="margin:0 0 8px">Changes apply immediately to new deposits, cash-outs and tables, and to the fee and pacing of tables already open. A running round finishes on the rules it started with. Saved values survive restarts; <b>Reset to defaults</b> returns every field to <code>server/.env</code>. House accounts and names take comma-separated lists, paired by position.</p>
       <div id="sform" class="tiles" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))"></div>
       <p id="serr" class="rejected" style="margin:8px 0 0"></p>
     </section>
@@ -109,6 +111,8 @@ export function dashboardPage({ currency }) {
 <div id="msg"></div>
 <script>
 const CUR = ${JSON.stringify(currency)};
+const GATEWAY = ${JSON.stringify(Boolean(gateway))};
+const PAYOUT = ${JSON.stringify(payoutText)};
 const $ = (s) => document.querySelector(s);
 const money = (n) => (Number(n ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + CUR;
 const when = (iso) => iso ? new Date(iso).toLocaleString() : '';
@@ -146,9 +150,9 @@ async function loadWithdrawals() {
   const status = $('#wstatus').value;
   const { withdrawals } = await api('/api/admin/withdrawals?status=' + status);
   $('#wrows').innerHTML = withdrawals.length ? withdrawals.map((w) => '<tr>' +
-    '<td>' + when(w.createdAt) + '</td><td><code>' + w.ref + '</code></td><td>' + w.userId + '</td><td>' + w.method + '</td><td>' + (w.account ?? '') + '</td>' +
+    '<td>' + when(w.createdAt) + '</td><td><code>' + w.ref + '</code></td><td>' + w.userId + (w.playerName ? ' <span class="muted">' + esc(w.playerName) + '</span>' : '') + '</td><td>' + w.method + '</td><td>' + esc(w.account ?? '') + '</td>' +
     '<td class="right">' + money(-w.amount) + '</td><td class="right">' + money(w.fee) + '</td><td class="right"><b>' + money(w.payout) + '</b></td>' +
-    '<td class="' + w.status + '">' + w.status + '</td><td class="muted">' + (w.providerRef ?? w.reason ?? '') + '</td>' +
+    '<td class="' + w.status + '">' + w.status + '</td><td class="muted">' + esc(w.providerRef ?? w.reason ?? '') + (w.verified ? ' <span class="paid">· ' + esc(w.verified) + '</span>' : '') + '</td>' +
     '<td>' + (w.status === 'pending' ? '<button class="btn ok" data-approve="' + w.ref + '">Approve</button> <button class="btn bad" data-reject="' + w.ref + '">Reject</button>' : '') + '</td></tr>').join('')
     : '<tr><td colspan="11" class="muted">Nothing here.</td></tr>';
 }
@@ -157,12 +161,13 @@ async function loadDeposits() {
   const status = $('#dstatus').value;
   const { deposits } = await api('/api/admin/deposits?status=' + status);
   $('#drows').innerHTML = deposits.length ? deposits.map((d) => '<tr>' +
-    '<td>' + when(d.createdAt) + '</td><td><code>' + d.ref + '</code></td><td>' + d.userId + '</td><td>' + d.method + '</td>' +
+    '<td>' + when(d.createdAt) + '</td><td><code>' + d.ref + '</code></td><td>' + d.userId + (d.playerName ? ' <span class="muted">' + esc(d.playerName) + '</span>' : '') + '</td><td>' + d.method + '</td>' +
+    '<td>' + esc(d.account ?? '') + (d.accountName ? ' <span class="muted">(' + esc(d.accountName) + ')</span>' : '') + '</td>' +
     '<td><code>' + esc(d.providerRef) + '</code>' + (d.method === 'telebirr' ? ' <a href="https://transactioninfo.ethiotelecom.et/receipt/' + encodeURIComponent(d.providerRef) + '" target="_blank" rel="noopener" style="color:var(--aqua)">receipt ↗</a>' : '') + '</td>' +
     '<td class="right"><b>' + money(d.amount) + '</b>' + (d.credited != null ? ' <span class="muted">→ ' + money(d.credited) + '</span>' : '') + '</td>' +
     '<td class="' + d.status + '">' + d.status + '</td><td class="muted">' + esc(d.verified ? 'verified: ' + d.verified : d.autoCheck ?? d.reason ?? '') + '</td>' +
-    '<td>' + (d.status === 'pending' ? '<button class="btn ok" data-dapprove="' + d.ref + '">Confirm</button> <button class="btn bad" data-dreject="' + d.ref + '">Reject</button>' : '') + '</td></tr>').join('')
-    : '<tr><td colspan="9" class="muted">Nothing here.</td></tr>';
+    '<td>' + (d.status === 'pending' ? (d.method === 'telebirr' ? '<button class="btn" data-dverify="' + d.ref + '">Verify</button> ' : '') + '<button class="btn ok" data-dapprove="' + d.ref + '">Confirm</button> <button class="btn bad" data-dreject="' + d.ref + '">Reject</button>' : '') + '</td></tr>').join('')
+    : '<tr><td colspan="10" class="muted">Nothing here.</td></tr>';
 }
 
 async function loadHouse() {
@@ -283,14 +288,18 @@ async function postAnnouncement() {
 let settingsData = null;
 async function loadSettings() {
   settingsData = await api('/api/admin/settings');
-  const { schema, values, defaults, overrides } = settingsData;
+  const { schema, values } = settingsData;
   const groups = [...new Set(schema.map((f) => f.group))];
   $('#sform').innerHTML = groups.map((g) => '<div class="tile"><b>' + g + '</b>' + schema.filter((f) => f.group === g).map((f) => {
-    const v = values[f.key], d = defaults[f.key];
+    const v = values[f.key];
     const show = (x) => Array.isArray(x) ? x.join(',') : x;
-    const changed = f.key in overrides;
-    return '<label style="display:block;margin-top:8px"><span style="display:block;font-size:12px;color:var(--muted)">' + esc(f.label) + (changed ? ' <span class="pending">· overridden (env: ' + esc(show(d)) + ')</span>' : '') + '</span>' +
-      '<input data-setting="' + f.key + '" value="' + esc(show(v)) + '"' + (f.scope === 'stakes' ? '' : ' type="number" min="' + f.min + '" max="' + f.max + '" step="' + f.step + '"') + ' style="width:100%;margin-top:3px"></label>';
+    return '<label style="display:block;margin-top:8px"><span style="display:block;font-size:12px;color:var(--muted)">' + esc(f.label) + '</span>' +
+      // Stakes and house accounts are text (comma-separated lists, names); everything else is a number.
+      '<input data-setting="' + f.key + '" value="' + esc(show(v)) + '"' +
+      (f.scope === 'stakes' ? ' type="text" placeholder="10,20,50"'
+        : f.scope === 'account' ? ' type="text" placeholder="' + (f.field === 'name' ? 'Aman,Kalid' : '0937766034,0960524040') + '" autocomplete="off"'
+        : ' type="number" min="' + f.min + '" max="' + f.max + '" step="' + f.step + '"') +
+      ' style="width:100%;margin-top:3px"></label>';
   }).join('') + '</div>').join('');
   $('#serr').textContent = '';
 }
@@ -350,6 +359,14 @@ document.addEventListener('click', async (e) => {
     if (t.dataset.tab === 'settings') loadSettings().catch((err) => toast(err.message, true));
     if (t.dataset.tab === 'rooms') loadRooms().catch((err) => toast(err.message, true));
   }
+  if (t.dataset.dverify) {
+    try {
+      const r = await api('/api/admin/deposits/' + t.dataset.dverify + '/verify', { method: 'POST' });
+      toast(r.check.ok ? 'Receipt confirmed · wallet credited' : 'Not confirmed: ' + r.check.reason, !r.check.ok);
+      refreshAll();
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
   if (t.dataset.dapprove) {
     if (!confirm('Confirm this transfer and credit the wallet?')) return;
     try { await api('/api/admin/deposits/' + t.dataset.dapprove + '/approve', { method: 'POST' }); toast('Deposit confirmed'); refreshAll(); }
@@ -397,10 +414,20 @@ document.addEventListener('click', async (e) => {
   const prow = t.closest('.prow');
   if (prow) togglePlayerLedger(prow).catch((err) => toast(err.message, true));
   if (t.dataset.approve) {
-    const providerRef = prompt('Paid out through the gateway? Enter the transaction / provider reference:');
+    const providerRef = prompt(GATEWAY
+      ? 'Telebirr transaction id of a payout you already sent — or leave empty to send it through the Telebirr gateway now:'
+      : 'Send the payout from ' + PAYOUT + ' first, then paste its Telebirr transaction id (the receipt is checked before it is marked paid):');
     if (providerRef === null) return;
-    try { await api('/api/admin/withdrawals/' + t.dataset.approve + '/approve', { method: 'POST', body: JSON.stringify({ providerRef }) }); toast('Marked as paid'); refreshAll(); }
-    catch (err) { toast(err.message, true); }
+    const approve = (force) => api('/api/admin/withdrawals/' + t.dataset.approve + '/approve', { method: 'POST', body: JSON.stringify({ providerRef, force }) });
+    try {
+      const r = await approve(false);
+      toast(r.verified === 'gateway' ? 'Sent through the gateway · marked paid' : r.verified === 'receipt' ? 'Receipt verified · marked paid' : 'Marked as paid');
+      refreshAll();
+    } catch (err) {
+      if (/^Receipt check failed/.test(err.message) && confirm(err.message + '\\n\\nMark it as paid anyway?')) {
+        try { await approve(true); toast('Marked as paid (unverified)'); refreshAll(); } catch (e2) { toast(e2.message, true); }
+      } else toast(err.message, true);
+    }
   }
   if (t.dataset.reject) {
     const reason = prompt('Reason shown to the player (the hold is refunded):', 'Account could not be verified');
@@ -418,7 +445,7 @@ $('#dstatus').addEventListener('change', loadDeposits);
 $('#apost').addEventListener('click', postAnnouncement);
 $('#ssave').addEventListener('click', saveSettings);
 $('#sreset').addEventListener('click', async () => {
-  if (!confirm('Drop every override and return to the .env defaults?')) return;
+  if (!confirm('Return every setting to the values in server/.env?')) return;
   try { await api('/api/admin/settings/reset', { method: 'POST' }); toast('Settings reset'); await Promise.all([loadSettings(), loadSummary()]); }
   catch (err) { toast(err.message, true); }
 });

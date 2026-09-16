@@ -22,21 +22,34 @@ export const config = {
   minTopup: num('MIN_TOPUP', 10),
   maxTopup: num('MAX_TOPUP', 5000),
   /** Share of every wallet top-up kept by the house. */
-  depositFeePercent: num('DEPOSIT_FEE_PERCENT', 2),
+  depositFeePercent: num('DEPOSIT_FEE_PERCENT', 0),
   /** House accounts players transfer to when depositing by receipt id (shown with a copy button). */
   houseAccounts: {
     telebirr: { account: env('HOUSE_TELEBIRR_ACCOUNT'), name: env('HOUSE_TELEBIRR_NAME') },
     cbebirr: { account: env('HOUSE_CBEBIRR_ACCOUNT'), name: env('HOUSE_CBEBIRR_NAME') },
     boa: { account: env('HOUSE_BOA_ACCOUNT'), name: env('HOUSE_BOA_NAME') },
   },
+  /**
+   * Cash-outs are paid out by the operator from this house account (shown to players on
+   * the Cash out tab and to the operator in the dashboard). PAYOUT_METHOD limits which
+   * rail players can be paid on; empty = every rail.
+   */
+  payout: {
+    method: env('PAYOUT_METHOD', 'telebirr'),
+    account: env('PAYOUT_ACCOUNT'),
+    name: env('PAYOUT_NAME'),
+  },
   /** Cash-outs: limits in ETB and the share kept by the house (0 = free). */
   minWithdraw: num('MIN_WITHDRAW', 50),
   maxWithdraw: num('MAX_WITHDRAW', 5000),
-  withdrawFeePercent: num('WITHDRAW_FEE_PERCENT', 0),
+  withdrawFeePercent: num('WITHDRAW_FEE_PERCENT', 2),
   /** Smallest in-game wallet transfer between players, in ETB. */
   minTransfer: num('MIN_TRANSFER', 5),
   /** TEST ONLY: credit every transfer+receipt deposit at once, without checking the receipt. */
   autoApproveDeposits: bool('AUTO_APPROVE_DEPOSITS'),
+  /** Pending Telebirr deposits are re-checked against the public receipt this often, for this long. */
+  receiptRecheckMs: num('RECEIPT_RECHECK_MS', 180_000),
+  receiptRecheckHours: num('RECEIPT_RECHECK_HOURS', 24),
   // Without a bot token initData cannot be verified, so anonymous dev access is implied.
   devAllowAnon: bool('DEV_ALLOW_ANON') || !botToken,
   /** PostgreSQL connection string; see server/.env.example. */
@@ -56,7 +69,7 @@ export const config = {
   game: {
     minPlayers: num('MIN_PLAYERS', 2),
     maxPlayers: num('MAX_PLAYERS', 8),
-    fullCard: bool('FULL_CARD', true),
+    fullCard: bool('FULL_CARD', false),
     linesToWin: num('LINES_TO_WIN', 1),
     callIntervalMs: num('CALL_INTERVAL_MS', 4000),
     countdownMs: num('COUNTDOWN_MS', 40000),
@@ -79,6 +92,8 @@ export const config = {
     shortCode: env('TELEBIRR_SHORT_CODE'),
     receiveName: env('TELEBIRR_RECEIVE_NAME', 'Telegram Bingo'),
     baseUrl: env('TELEBIRR_BASE_URL', 'https://app.ethiomobilemoney.et:2121').replace(/\/+$/, ''),
+    /** Disbursement (B2C) endpoint from your Telebirr merchant contract; empty = cash-outs are paid by hand. */
+    b2cUrl: env('TELEBIRR_B2C_URL'),
   },
 
   chapa: {

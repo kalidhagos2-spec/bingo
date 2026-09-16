@@ -710,6 +710,12 @@ export class PaymentStore {
     await this.pool.query('UPDATE settings SET overrides = $1 WHERE id = 1', [JSON.stringify(this.data.settings)]);
   }
 
+  /** Replaces the whole override set (used to drop keys that went back to their defaults). */
+  async setSettings(overrides) {
+    this.data.settings = { ...overrides };
+    await this.pool.query('UPDATE settings SET overrides = $1 WHERE id = 1', [JSON.stringify(this.data.settings)]);
+  }
+
   async resetSettings() {
     this.data.settings = {};
     await this.pool.query(`UPDATE settings SET overrides = '{}'::jsonb WHERE id = 1`);

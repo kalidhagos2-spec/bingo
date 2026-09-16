@@ -48,13 +48,30 @@ export default function Profile({ user, onNav, haptic }) {
     }
   };
 
+  /**
+   * The account is the Telegram account, so "logging out" means forgetting this device's
+   * preferences and closing the Mini App; opening it again from the bot signs in afresh.
+   */
+  const logout = () => {
+    try {
+      for (const key of Object.keys(localStorage)) if (key.startsWith('tgb-')) localStorage.removeItem(key);
+      sessionStorage.clear();
+    } catch {
+      /* storage unavailable */
+    }
+    const tg = window.Telegram?.WebApp;
+    if (tg?.initData && typeof tg.close === 'function') tg.close();
+    else window.location.replace(window.location.pathname);
+  };
+
   const display = profile?.name || user?.first_name || 'Player';
   const stats = profile?.stats ?? { games: 0, wins: 0, winnings: 0 };
 
   return (
-    <main className="min-h-full flex flex-col items-center gap-3 px-3 py-4 bg-ink-900 text-slate-100 animate-fade-in">
-      <div className="w-full max-w-sm flex flex-col gap-3">
+    <main className="h-[100dvh] overflow-hidden flex flex-col items-center gap-3 px-3 py-3 bg-ink-900 text-slate-100 animate-fade-in">
+      <div className="w-full max-w-sm flex-1 min-h-0 flex flex-col gap-3">
         <ScreenHeader onBack={() => onNav('play')} title="👤 Profile" />
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
         <section className="rounded-2xl bg-gradient-to-br from-ink-700 to-ink-800 border border-ink-600/60 p-4 flex items-center gap-4">
           <span className="w-16 h-16 rounded-full bg-gradient-to-br from-amber-300 to-orange-500 flex items-center justify-center text-3xl font-black text-ink-950 border-4 border-ink-600 shadow-lg">
@@ -119,6 +136,15 @@ export default function Profile({ user, onNav, haptic }) {
             {busy ? 'Saving…' : 'Save profile'}
           </button>
         </form>
+
+        </div>
+        <button
+          type="button"
+          onClick={logout}
+          className="w-full py-2.5 rounded-xl bg-ink-800 border border-rose-500/40 text-rose-300 text-sm font-black active:scale-95"
+        >
+          🚪 Log out &amp; close
+        </button>
 
         <BottomNav active="profile" onNav={onNav} badges={{ profile: profile && !profile.complete }} />
       </div>

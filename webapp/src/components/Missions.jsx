@@ -32,9 +32,10 @@ export default function Missions({ onNav, haptic }) {
   const resetIn = eco ? untilText(eco.bonus.nextAt) : '';
 
   return (
-    <main className="min-h-full flex flex-col items-center gap-3 px-3 py-4 bg-ink-900 text-slate-100 animate-fade-in">
-      <div className="w-full max-w-sm flex flex-col gap-3">
+    <main className="h-[100dvh] overflow-hidden flex flex-col items-center gap-3 px-3 py-3 bg-ink-900 text-slate-100 animate-fade-in">
+      <div className="w-full max-w-sm flex-1 min-h-0 flex flex-col gap-3">
         <ScreenHeader onBack={() => onNav('play')} title="⭐ Missions" right={<>🪙 {eco?.coins ?? '—'}</>} />
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
         <p className="text-xs text-slate-300 px-1">
           Daily missions reset in <span className="font-black text-white">{resetIn}</span>.
@@ -67,6 +68,7 @@ export default function Missions({ onNav, haptic }) {
 
         {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
 
+        </div>
         <BottomNav active="missions" onNav={onNav} badges={{ missions: claimable > 0 ? claimable : false }} />
       </div>
     </main>

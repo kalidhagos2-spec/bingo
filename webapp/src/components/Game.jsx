@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { connectSocket, request } from '../lib/socket.js';
 import { api } from '../lib/api.js';
 import { themeFor } from '../lib/themes.js';
-import { untilText } from './Missions.jsx';
 import { BottomNav } from './Nav.jsx';
-import { LETTERS } from '../lib/bingo.js';
+import { LETTERS, winningPattern, isCorners } from '../lib/bingo.js';
 import { playMark, playLine, playWin, announceCall, isMuted, setMuted } from '../lib/sound.js';
 
 /* Column colours as in the reference app: B red, I blue, N green, G amber, O violet. */
@@ -36,6 +35,14 @@ export default function Game({ user, onNav, haptic }) {
   const [now, setNow] = useState(Date.now());
   const [ready, setReady] = useState(false); // pressed "Start Game" on the pick screen
   const [muted, setMutedState] = useState(isMuted());
+  // AUTO: called numbers are marked on my cartelas without tapping (remembered per device, on by default).
+  const [auto, setAuto] = useState(() => {
+    try {
+      return localStorage.getItem('tgb-auto') !== '0';
+    } catch {
+      return true;
+    }
+  });
   const [profile, setProfile] = useState(null);
   const [leaders, setLeaders] = useState([]);
   const [eco, setEco] = useState(null); // coins, daily bonus, missions, selected skin
@@ -157,10 +164,28 @@ export default function Game({ user, onNav, haptic }) {
   }, [onNav]);
 
   const calledSet = useMemo(() => new Set(room?.called ?? []), [room?.called]);
-  const canClaim = Boolean(cards?.some((c) => c.marks.length > 0 && c.marks.every(Boolean)));
+  // Same rule as the server: a full card when FULL_CARD is on, else a row/column/diagonal or the four corners.
+  const cardWins = (c) => (room?.rules?.fullCard ? c.marks.length > 0 && c.marks.every(Boolean) : Boolean(winningPattern(c.marks, room?.rules?.linesToWin ?? 1)));
+  const canClaim = Boolean(cards?.some(cardWins));
   // What the server says I hold (the local cards can lag behind, e.g. right after a round).
   const myCartelas = room?.players.find((p) => p.id === myId)?.cartelas ?? [];
   const maxCartelas = room?.rules?.maxCartelas ?? 4;
+
+  /** Marks a called number on every cartela of mine that carries it (the server does the fan-out). */
+  const markNumber = useCallback(
+    async (number) => {
+      const res = await act('game:mark', { number });
+      if (res) {
+        const fresh = new Map((res.cards ?? []).map((c) => [c.cartela, c.marks]));
+        setCards((list) => list?.map((c) => (fresh.has(c.cartela) ? { ...c, marks: fresh.get(c.cartela) } : c)) ?? list);
+        playMark();
+        haptic?.('light');
+        if (res.cards?.some((c) => c.canClaim)) playLine();
+      }
+      return res;
+    },
+    [act, haptic],
+  );
 
   /** Tap on cell `index` of my `cardIndex`-th cartela. */
   const onCell = async (cardIndex, index) => {
@@ -172,15 +197,25 @@ export default function Game({ user, onNav, haptic }) {
       setError(`${letterFor(cell.value)}-${cell.value} has not been called yet`);
       return;
     }
-    const res = await act('game:mark', { number: cell.value, cartela: card.cartela });
-    if (res) {
-      const fresh = new Map((res.cards ?? []).map((c) => [c.cartela, c.marks]));
-      setCards((list) => list?.map((c) => (fresh.has(c.cartela) ? { ...c, marks: fresh.get(c.cartela) } : c)) ?? list);
-      playMark();
-      haptic?.('light');
-      if (res.cards?.some((c) => c.full)) playLine();
-    }
+    await markNumber(cell.value);
   };
+
+  // AUTO mode: whenever a called number sits unmarked on one of my cartelas, mark it.
+  useEffect(() => {
+    if (!auto || room?.phase !== 'playing' || !cards?.length) return undefined;
+    const pending = (room.called ?? []).filter((n) => cards.some((c) => c.cells.some((cell, i) => cell.value === n && !c.marks[i])));
+    if (pending.length === 0) return undefined;
+    let cancelled = false;
+    (async () => {
+      for (const n of pending) {
+        if (cancelled) return;
+        await markNumber(n);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auto, current, room?.phase, room?.called, cards, markNumber]);
 
   const claim = async () => {
     const res = await act('game:claim');
@@ -205,6 +240,16 @@ export default function Game({ user, onNav, haptic }) {
   };
 
   const toggleMute = () => setMutedState(setMuted());
+  const toggleAuto = () => {
+    setAuto((v) => {
+      try {
+        localStorage.setItem('tgb-auto', v ? '0' : '1');
+      } catch {
+        /* storage unavailable */
+      }
+      return !v;
+    });
+  };
 
   const dismiss = (id) => {
     const next = [...dismissed, id].slice(-50);
@@ -216,18 +261,6 @@ export default function Game({ user, onNav, haptic }) {
     }
   };
   const visibleAnnouncements = announcements.filter((a) => !dismissed.includes(a.id) && (!a.expiresAt || new Date(a.expiresAt) > new Date()));
-
-  const claimBonus = async () => {
-    setError('');
-    try {
-      const r = await api('/economy/bonus/claim', { method: 'POST' });
-      setEco(r.economy);
-      haptic?.('success');
-    } catch (e) {
-      setError(e.message);
-      haptic?.('error');
-    }
-  };
 
   // ---------- lobby ----------
   if (!room) {
@@ -248,8 +281,7 @@ export default function Game({ user, onNav, haptic }) {
           </button>
         </section>
 
-        {eco && <DailyBonus bonus={eco.bonus} onClaim={claimBonus} />}
-
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
         <Announcements items={visibleAnnouncements} onDismiss={dismiss} />
 
         {profile && !profile.complete && (
@@ -304,6 +336,7 @@ export default function Game({ user, onNav, haptic }) {
         </section>
 
         {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
+        </div>
 
         <BottomNav
           active="play"
@@ -346,6 +379,7 @@ export default function Game({ user, onNav, haptic }) {
   }
 
   const playersInRound = room.players.filter((p) => p.playing).length || room.ready;
+  const many = (cards?.length ?? 0) >= 3;
   return (
     <Shell tight>
       <section className="w-full grid grid-cols-3 gap-2">
@@ -354,29 +388,12 @@ export default function Game({ user, onNav, haptic }) {
         <Stat label="Players" value={playersInRound} />
       </section>
 
-      <section className="w-full grid grid-cols-[minmax(0,5fr)_minmax(0,6fr)] gap-2 items-start">
-        <CalledBoard called={calledSet} current={current} />
-        <div className="flex flex-col gap-2 min-w-0">
-          <div className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2 flex items-center justify-between">
-            <span className="text-[11px] font-black tracking-widest text-slate-300">CALL</span>
-            <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[6rem] text-center rounded-xl px-4 py-1.5 text-2xl font-black text-ink-950 shadow-lg animate-pop`} aria-live="polite">
-              {current ? `${letterFor(current)}-${current}` : '—'}
-            </span>
-          </div>
-          {room.called?.length > 1 && (
-            <div className="flex flex-wrap justify-center gap-1" aria-label="Previous calls">
-              {room.called
-                .slice(-6, -1)
-                .reverse()
-                .map((n) => (
-                  <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black text-ink-950 opacity-80`}>
-                    {letterFor(n)}-{n}
-                  </span>
-                ))}
-            </div>
-          )}
-          {cards?.length ? (
-            cards.map((c, i) => (
+      {many ? (
+        /* 3–4 cartelas: no master board; a slim call strip and the cards across the full width. */
+        <section className="w-full flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
+          <CallStrip current={current} called={room.called ?? []} />
+          <div className="grid grid-cols-2 gap-2">
+            {cards.map((c, i) => (
               <Card
                 key={c.cartela}
                 cells={c.cells}
@@ -386,19 +403,61 @@ export default function Game({ user, onNav, haptic }) {
                 caption={`Cartela ${c.cartela} · ${Math.max(0, c.marks.filter(Boolean).length - 1)}/24`}
                 theme={theme}
               />
-            ))
-          ) : (
-            <div className="rounded-2xl bg-ink-800 border border-ink-600/60 p-4 text-center text-xs text-slate-300">
-              Round in progress. Pick a cartela when registration re-opens.
+            ))}
+            {cards.length === 3 && <LogoTile />}
+          </div>
+          {canClaim && playing && <p className="text-[11px] text-center font-bold text-amber-300">You have BINGO · press the button!</p>}
+        </section>
+      ) : (
+        /* 1–2 cartelas: master board on the left, call pill and cards on the right. */
+        <section className="w-full flex-1 min-h-0 overflow-y-auto grid gap-2 items-stretch grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <CalledBoard called={calledSet} current={current} />
+          <div className="flex flex-col gap-2 min-w-0">
+            <div className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2 flex items-center justify-between">
+              <span className="text-[11px] font-black tracking-widest text-slate-300">CALL</span>
+              <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[6rem] text-center rounded-xl px-4 py-1.5 text-2xl font-black text-ink-950 shadow-lg animate-pop`} aria-live="polite">
+                {current ? `${letterFor(current)}-${current}` : '—'}
+              </span>
             </div>
-          )}
-          {canClaim && playing && <p className="text-[11px] text-center font-bold text-amber-300">Full card · press BINGO!</p>}
-        </div>
-      </section>
+            {room.called?.length > 1 && (
+              <div className="flex flex-wrap justify-center gap-1" aria-label="Previous calls">
+                {room.called
+                  .slice(-6, -1)
+                  .reverse()
+                  .map((n) => (
+                    <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black text-ink-950 opacity-80`}>
+                      {letterFor(n)}-{n}
+                    </span>
+                  ))}
+              </div>
+            )}
+            {cards?.length ? (
+              <div className="flex flex-col gap-2">
+                {cards.map((c, i) => (
+                  <Card
+                    key={c.cartela}
+                    cells={c.cells}
+                    marks={c.marks}
+                    called={calledSet}
+                    onCell={playing ? (index) => onCell(i, index) : null}
+                    caption={`Cartela ${c.cartela} · ${Math.max(0, c.marks.filter(Boolean).length - 1)}/24`}
+                    theme={theme}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-ink-800 border border-ink-600/60 p-4 text-center text-xs text-slate-300">
+                Round in progress. Pick a cartela when registration re-opens.
+              </div>
+            )}
+            {canClaim && playing && <p className="text-[11px] text-center font-bold text-amber-300">You have BINGO · press the button!</p>}
+          </div>
+        </section>
+      )}
 
       {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
 
-      <nav className="w-full grid grid-cols-[1fr_1fr_1.3fr_auto] gap-2 mt-auto">
+      <nav className="w-full grid grid-cols-[1fr_1fr_1.2fr_auto_auto] gap-1.5 mt-auto">
         <button onClick={leave} className="py-2.5 rounded-xl bg-ink-800 border border-rose-500/40 text-rose-300 text-xs font-black tracking-wider active:scale-95">
           LEAVE
         </button>
@@ -414,6 +473,17 @@ export default function Game({ user, onNav, haptic }) {
         </button>
         <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} className={`w-11 rounded-xl border text-base active:scale-95 ${muted ? 'bg-ink-800 border-ink-600 text-slate-400' : 'bg-rose-500/20 border-rose-500/50'}`}>
           {muted ? '🔇' : '🔊'}
+        </button>
+        <button
+          onClick={toggleAuto}
+          aria-pressed={auto}
+          title="Mark called numbers on your cartelas automatically"
+          className={`px-2 rounded-xl border text-[10px] font-black leading-tight active:scale-95 ${auto ? 'bg-lime-400/20 border-lime-400/60 text-lime-300' : 'bg-ink-800 border-ink-600 text-slate-400'}`}
+        >
+          AUTO
+          <span className={`mt-0.5 block h-3.5 w-7 mx-auto rounded-full relative ${auto ? 'bg-lime-400' : 'bg-ink-600'}`}>
+            <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-all ${auto ? 'right-0.5' : 'left-0.5'}`} />
+          </span>
         </button>
       </nav>
 
@@ -443,10 +513,11 @@ export default function Game({ user, onNav, haptic }) {
 
 /* ---------- pieces ---------- */
 
+/** Every screen is exactly one viewport tall; long content scrolls inside its own box, never the page. */
 function Shell({ children, tight = false }) {
   return (
-    <main className={`min-h-full flex flex-col items-center bg-ink-900 text-slate-100 animate-fade-in ${tight ? 'gap-2 px-2 py-2' : 'gap-3 px-3 py-4'}`}>
-      <div className="w-full max-w-sm flex-1 flex flex-col gap-3">{children}</div>
+    <main className={`h-[100dvh] overflow-hidden flex flex-col items-center bg-ink-900 text-slate-100 animate-fade-in ${tight ? 'gap-2 px-2 py-2' : 'gap-3 px-3 py-3'}`}>
+      <div className={`w-full max-w-sm flex-1 min-h-0 flex flex-col ${tight ? 'gap-2' : 'gap-3'}`}>{children}</div>
     </main>
   );
 }
@@ -499,27 +570,6 @@ function TopBar({ onBack, backLabel = 'Back', title, connected }) {
   );
 }
 
-/** Daily bonus card: streak day, reward, claim button or countdown to the next one. */
-function DailyBonus({ bonus, onClaim }) {
-  return (
-    <section className="flex items-center gap-3 rounded-2xl border border-amber-400/30 bg-gradient-to-r from-amber-400/15 via-orange-500/10 to-slate-900/80 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.2)]">
-      <span className={`text-4xl drop-shadow ${bonus.claimable ? 'animate-wiggle' : ''}`}>🎁</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-base font-black leading-tight">Daily Bonus</span>
-        <span className="block text-[11px] text-slate-300">
-          Day {bonus.streak} streak{bonus.doubled ? ' · ✨ doubled' : ''}{bonus.usesShield ? ' · 🛡️ shield' : ''}
-        </span>
-        <span className="mt-1 block text-sm font-black text-amber-300">
-          {bonus.claimable ? `+🪙 ${bonus.reward} today` : `Next in ${untilText(bonus.nextAt)}`}
-        </span>
-      </span>
-      <button disabled={!bonus.claimable} onClick={onClaim} className="shrink-0 rounded-xl bg-gradient-to-b from-amber-300 to-orange-500 px-3.5 py-2 text-sm font-black text-ink-950 shadow-lg shadow-amber-500/30 active:scale-95 disabled:opacity-40 disabled:grayscale">
-        {bonus.claimable ? 'CLAIM' : 'Claimed ✓'}
-      </button>
-    </section>
-  );
-}
-
 function LobbyStatus({ room, now }) {
   if (!room) return <span className="font-bold">Open · be the first</span>;
   if (room.phase === 'countdown') {
@@ -547,6 +597,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
   const atMax = myCartelas.length >= maxCartelas;
   return (
     <>
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2">
       <div className="text-center">
         {room.phase === 'countdown' ? (
           <p className={`text-3xl font-black tabular-nums ${secondsLeft <= 10 ? 'text-rose-500' : 'text-rose-400'}`}>{clock(secondsLeft)}</p>
@@ -565,7 +616,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
         </p>
       </div>
 
-      <div className="grid grid-cols-10 gap-1">
+      <div className="grid grid-cols-10 gap-1 max-h-[34vh] overflow-y-auto shrink-0 rounded-xl border border-ink-600/60 p-1">
         {Array.from({ length: count }, (_, i) => i + 1).map((n) => {
           const owner = taken.get(n);
           const mine = myCartelas.includes(n);
@@ -591,14 +642,20 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
         })}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="flex gap-2 overflow-x-auto shrink-0 pb-1">
         {cards?.length ? (
-          cards.map((c) => <Card key={c.cartela} cells={c.cells} marks={c.marks} caption={`Cartela ${c.cartela}`} theme={theme} />)
+          cards.map((c) => (
+            <div key={c.cartela} className="w-32 shrink-0">
+              <Card cells={c.cells} marks={c.marks} caption={`Cartela ${c.cartela}`} theme={theme} compact />
+            </div>
+          ))
         ) : (
-          <div className="rounded-2xl border border-dashed border-ink-600 bg-ink-800/60 flex items-center justify-center text-center text-xs text-slate-400 p-4">
+          <div className="w-full rounded-2xl border border-dashed border-ink-600 bg-ink-800/60 flex items-center justify-center text-center text-xs text-slate-400 p-4">
             Tap numbers above to get up to {maxCartelas} cartelas
           </div>
         )}
+      </div>
+      <div className="max-h-28 overflow-y-auto shrink-0">
         <div className="rounded-2xl bg-ink-800 border border-ink-600/60 p-3 text-[11px] text-slate-300 flex flex-col gap-1">
           <p className="font-black text-slate-100 text-xs">Picked ({room.ready})</p>
           {room.players.filter((p) => p.cartelas?.length).map((p) => (
@@ -617,8 +674,9 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
       </div>
 
       {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
+      </div>
 
-      <nav className="grid grid-cols-3 gap-2 mt-auto">
+      <nav className="grid grid-cols-3 gap-2 mt-auto shrink-0">
         <button onClick={onLeave} className="py-2.5 rounded-xl bg-ink-800 border border-ink-600 font-bold active:scale-95">
           Leave
         </button>
@@ -633,18 +691,52 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
   );
 }
 
+/** Slim call bar for the many-cartela layout: the latest number big, the five before it small. */
+function CallStrip({ current, called }) {
+  return (
+    <div className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2 flex items-center gap-2 shrink-0">
+      <span className="text-[11px] font-black tracking-widest text-slate-300">CALL</span>
+      <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[5.5rem] text-center rounded-xl px-3 py-1 text-2xl font-black text-ink-950 shadow-lg animate-pop`} aria-live="polite">
+        {current ? `${letterFor(current)}-${current}` : '—'}
+      </span>
+      <span className="flex-1 flex flex-wrap justify-end gap-1" aria-label="Previous calls">
+        {called
+          .slice(-6, -1)
+          .reverse()
+          .map((n) => (
+            <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black text-ink-950 opacity-80`}>
+              {letterFor(n)}-{n}
+            </span>
+          ))}
+      </span>
+      <span className="text-[11px] font-bold text-slate-400 shrink-0">{called.length}/75</span>
+    </div>
+  );
+}
+
+/** Fills the empty fourth slot when a player holds three cartelas. */
+function LogoTile() {
+  return (
+    <div className="rounded-2xl border border-ink-600/60 bg-ink-800/70 flex flex-col items-center justify-center gap-1 min-h-32">
+      <span className="flex h-14 w-14 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-rose-500 via-amber-400 to-emerald-500 text-2xl font-black text-ink-950 shadow-lg">B</span>
+      <span className="text-[10px] font-black tracking-[0.3em] text-amber-300">BINGO</span>
+    </div>
+  );
+}
+
 /** The 75-number master board: called numbers red, the latest one green. */
 function CalledBoard({ called, current }) {
+  // Fills the height it is given: 15 equal rows, so the numbers grow with the screen.
   return (
-    <div className="rounded-2xl bg-ink-800 border border-ink-600/60 p-1.5">
-      <div className="grid grid-cols-5 gap-1 mb-1">
+    <div className="h-full min-h-0 flex flex-col rounded-2xl bg-ink-800 border border-ink-600/60 p-1.5">
+      <div className="grid grid-cols-5 gap-1 mb-1 shrink-0">
         {LETTERS.map((l, i) => (
-          <span key={l} className={`${COL[i]} rounded-md text-center text-[11px] font-black text-ink-950 py-0.5`}>
+          <span key={l} className={`${COL[i]} rounded-md text-center text-xs font-black text-ink-950 py-0.5`}>
             {l}
           </span>
         ))}
       </div>
-      <div className="grid grid-cols-5 gap-1">
+      <div className="flex-1 min-h-0 grid grid-cols-5 grid-rows-[repeat(15,minmax(0,1fr))] gap-1">
         {Array.from({ length: 15 }, (_, row) =>
           LETTERS.map((_, col) => {
             const n = col * 15 + row + 1;
@@ -653,7 +745,7 @@ function CalledBoard({ called, current }) {
             return (
               <span
                 key={n}
-                className={`h-5 rounded text-[11px] font-bold flex items-center justify-center ${
+                className={`min-h-5 rounded text-sm font-bold flex items-center justify-center ${
                   latest ? 'bg-lime-400 text-ink-950 animate-pop' : hit ? 'bg-rose-600 text-white' : 'bg-ink-700 text-slate-300'
                 }`}
               >
@@ -671,17 +763,18 @@ function CalledBoard({ called, current }) {
  * A cartela: coloured B I N G O header, marked numbers green, centre X. Numbers that
  * have been called but not marked yet get a glowing ring so the player can spot them.
  */
-function Card({ cells, marks, onCell, caption, highlight = new Set(), called = new Set(), theme = themeFor('classic') }) {
+function Card({ cells, marks, onCell, caption, highlight = new Set(), called = new Set(), theme = themeFor('classic'), compact = false }) {
+  const gap = compact ? 'gap-0.5' : 'gap-1';
   return (
-    <div className={`rounded-2xl border p-1.5 ${theme.frame}`}>
-      <div className="grid grid-cols-5 gap-1 mb-1">
+    <div className={`rounded-2xl border ${compact ? 'p-1' : 'p-1.5'} ${theme.frame}`}>
+      <div className={`grid grid-cols-5 ${gap} mb-0.5`}>
         {LETTERS.map((l, i) => (
-          <span key={l} className={`${theme.cols[i]} rounded-md text-center text-xs font-black text-ink-950 py-0.5`}>
+          <span key={l} className={`${theme.cols[i]} rounded-md text-center ${compact ? 'text-[9px]' : 'text-xs'} font-black text-ink-950 py-0.5`}>
             {l}
           </span>
         ))}
       </div>
-      <div className="grid grid-cols-5 gap-1">
+      <div className={`grid grid-cols-5 ${gap}`}>
         {cells.map((cell) => {
           const free = cell.value === null;
           const marked = marks[cell.index];
@@ -699,7 +792,7 @@ function Card({ cells, marks, onCell, caption, highlight = new Set(), called = n
               disabled={onCell ? free || marked : undefined}
               onClick={onCell ? () => onCell(cell.index) : undefined}
               aria-pressed={onCell ? marked : undefined}
-              className={`aspect-square rounded-md text-sm font-black flex items-center justify-center select-none ${look} ${onCell && !free && !marked ? 'active:scale-90' : ''}`}
+              className={`aspect-square rounded-md ${compact ? 'text-[10px]' : 'text-base'} font-black flex items-center justify-center select-none ${look} ${onCell && !free && !marked ? 'active:scale-90' : ''}`}
             >
               {free ? '★' : cell.value}
             </Tag>
@@ -733,7 +826,7 @@ function WinModal({ over, myId, onAgain, onLeave }) {
             <p className="text-sm text-slate-300 mt-1 mb-2">Cartela ~ {w.cartela}</p>
             <Card cells={w.card} marks={w.marks} highlight={w.full ? new Set() : line} />
             <p className="mt-3 font-black text-amber-300 text-lg">
-              {w.full ? 'Full card' : 'Line'}
+              {w.full ? 'Full card' : isCorners(w.line) ? 'Four corners' : 'Line'}
               {w.prize > 0 ? ` | ${etb(w.prize)} won` : ''}
             </p>
             {iWon && <p className="text-sm text-lime-400 font-bold">That is you! 🏆</p>}

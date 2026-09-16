@@ -28,21 +28,12 @@ test('daily bonus: once per UTC day, streak grows day by day and resets after a 
   assert.equal(bonusStatus(profile, T0 + 13 * DAY_MS).reward, BONUS_SCHEDULE.at(-1)); // capped
 });
 
-test('a streak shield saves a missed day and a doubler doubles the next bonus', () => {
+test('the shop no longer sells daily-bonus boosters', () => {
   const profile = {};
-  claimBonus(profile, T0);
   addCoins(profile, 1000, 'test', T0);
-  buy(profile, 'shield', T0);
-  buy(profile, 'doubler', T0);
-  assert.deepEqual(profile.economy.items, { shield: 1, doubler: 1 });
-  const s = bonusStatus(profile, T0 + 2 * DAY_MS); // skipped one day
-  assert.equal(s.usesShield, true);
-  assert.equal(s.streak, 2);
-  assert.equal(s.doubled, true);
-  assert.equal(s.reward, 150);
-  claimBonus(profile, T0 + 2 * DAY_MS);
-  assert.deepEqual(profile.economy.items, { shield: 0, doubler: 0 });
-  assert.equal(profile.economy.bonus.streak, 2);
+  assert.throws(() => buy(profile, 'shield', T0), /Unknown item/);
+  assert.throws(() => buy(profile, 'doubler', T0), /Unknown item/);
+  assert.equal(shopView(profile, T0).items.some((i) => i.kind === 'consumable'), false);
 });
 
 test('missions track game events, reset daily and pay out once', () => {
@@ -64,7 +55,7 @@ test('missions track game events, reset daily and pay out once', () => {
   assert.equal(profile.economy.coins, 100);
 });
 
-test('shop: skins are bought once and selectable, consumables stack, no overdraft', () => {
+test('shop: skins are bought once and selectable, no overdraft', () => {
   const profile = {};
   assert.throws(() => buy(profile, 'theme_emerald', T0), /Not enough coins/);
   addCoins(profile, 1500, 'test', T0);
@@ -73,17 +64,13 @@ test('shop: skins are bought once and selectable, consumables stack, no overdraf
   assert.equal(coins, 1000);
   assert.equal(profile.economy.themes.selected, 'emerald');
   assert.throws(() => buy(profile, 'theme_emerald', T0), /already own/);
-  buy(profile, 'shield', T0);
-  buy(profile, 'shield', T0);
-  assert.equal(profile.economy.items.shield, 2);
   assert.throws(() => selectTheme(profile, 'gold', T0), /do not own/);
   assert.throws(() => selectTheme(profile, 'plaid', T0), /Unknown skin/);
   selectTheme(profile, 'classic', T0);
   const shop = shopView(profile, T0);
   assert.equal(shop.selectedTheme, 'classic');
   assert.equal(shop.items.find((i) => i.id === 'theme_emerald').owned, true);
-  assert.equal(shop.items.find((i) => i.id === 'shield').quantity, 2);
-  assert.equal(economyView(profile, T0).coinLog[0].note, 'Shop · Streak shield');
+  assert.equal(economyView(profile, T0).coinLog[0].note, 'Shop · Emerald cartela');
 });
 
 test('store: free bingo wins pay coins and rounds feed the missions', async (t) => {
@@ -107,7 +94,7 @@ test('store: free bingo wins pay coins and rounds feed the missions', async (t) 
   assert.equal((await store.gameHistory('zzz')).length, 0);
   assert.equal(store.coins(2), 0); // paid tables pay ETB, not coins
   const m1 = Object.fromEntries(missionsView(store.profile(1), T0).map((m) => [m.id, m.progress]));
-  assert.deepEqual(m1, { play3: 2, win1: 1, mark50: 0, paid1: 1, bonus: 0 });
+  assert.deepEqual(m1, { play3: 2, win1: 1, mark50: 0, paid1: 1 });
   store.trackMission(1, 'marks', 7, T0);
   assert.equal(missionsView(store.profile(1), T0).find((m) => m.id === 'mark50').progress, 7);
   const r = await store.updateProfile(1, (p) => claimMission(p, 'win1', T0));

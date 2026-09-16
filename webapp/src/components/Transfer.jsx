@@ -81,9 +81,10 @@ export default function Transfer({ onNav, haptic }) {
   const canSend = Boolean(recipient) && value >= minAmount && value <= (wallet?.balance ?? 0) && !busy;
 
   return (
-    <main className="min-h-full flex flex-col items-center gap-3 px-3 py-4 bg-ink-900 text-slate-100 animate-fade-in">
-      <div className="w-full max-w-sm flex flex-col gap-3">
+    <main className="h-[100dvh] overflow-hidden flex flex-col items-center gap-3 px-3 py-3 bg-ink-900 text-slate-100 animate-fade-in">
+      <div className="w-full max-w-sm flex-1 min-h-0 flex flex-col gap-3">
         <ScreenHeader onBack={() => onNav('play')} title="💸 Send money" />
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
         <section className="rounded-2xl bg-gradient-to-br from-sky-400 to-violet-600 p-4 text-ink-950 shadow-lg shadow-black/30">
           <p className="text-[10px] font-black uppercase tracking-wider opacity-80">Available to send</p>
@@ -149,6 +150,8 @@ export default function Transfer({ onNav, haptic }) {
             <p className="text-sm text-slate-400">No transfers yet.</p>
           )}
         </section>
+
+        </div>
 
         <BottomNav active="transfer" onNav={onNav} />
       </div>

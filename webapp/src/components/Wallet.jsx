@@ -41,7 +41,8 @@ export default function Wallet({ onNav, hint = null, haptic }) {
   const [copied, setCopied] = useState('');
   const [outMethod, setOutMethod] = useState('');
   const [outAmount, setOutAmount] = useState('');
-  const [account, setAccount] = useState('');
+  const [account, setAccount] = useState(''); // Telebirr number the player wants the cash-out sent to (asked every time)
+  const [profilePhone, setProfilePhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -65,7 +66,7 @@ export default function Wallet({ onNav, hint = null, haptic }) {
         setTxAccount(cfg.transfer?.accounts?.[0] ?? null);
         setOutMethod(cfg.payoutMethods?.[0]?.id ?? '');
         setMode(cfg.transfer?.accounts?.length ? 'transfer' : cfg.methods.length ? 'online' : null);
-        if (profile?.phone) setAccount(profile.phone);
+        if (profile?.phone) setProfilePhone(profile.phone);
       })
       .catch((e) => alive && setError(e.message));
     return () => {
@@ -175,8 +176,11 @@ export default function Wallet({ onNav, hint = null, haptic }) {
   const accounts = config?.transfer?.accounts ?? [];
   const online = config?.methods ?? [];
   const payoutMethods = config?.payoutMethods ?? [];
+  const payout = config?.payout ?? null;
+  const payoutLabel = payoutMethods.find((m) => m.id === payout?.method)?.label ?? 'Telebirr';
   const wd = config?.withdraw ?? { min: 0, max: 0, feePercent: 0 };
   const outGross = Number(outAmount) || 0;
+  const accountOk = account.replace(/\D/g, '').length >= 9; // a full Ethiopian mobile number
   const outNet = afterFee(outGross, wd.feePercent);
   const pendingOut = (wallet?.transactions ?? []).filter((t) => t.type === 'withdraw' && t.status === 'pending');
   const held = pendingOut.reduce((s, t) => s - t.amount, 0);
@@ -200,9 +204,10 @@ export default function Wallet({ onNav, hint = null, haptic }) {
   );
 
   return (
-    <main className="min-h-full flex flex-col items-center gap-3 px-3 py-4 bg-ink-900 text-slate-100 animate-fade-in">
-      <div className="w-full max-w-sm flex flex-col gap-3">
+    <main className="h-[100dvh] overflow-hidden flex flex-col items-center gap-3 px-3 py-3 bg-ink-900 text-slate-100 animate-fade-in">
+      <div className="w-full max-w-sm flex-1 min-h-0 flex flex-col gap-3">
         <ScreenHeader onBack={() => onNav('play')} title="💵 Wallet" />
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
         <section className="rounded-2xl bg-gradient-to-br from-lime-400 to-emerald-600 p-4 text-ink-950 shadow-lg shadow-black/30">
           <p className="text-[10px] font-black uppercase tracking-wider opacity-80">Available balance</p>
@@ -215,6 +220,9 @@ export default function Wallet({ onNav, hint = null, haptic }) {
             </p>
           )}
           {pendingRef && <p className="mt-1 text-xs font-bold">⏳ Waiting for payment confirmation…</p>}
+          <button type="button" onClick={() => onNav('transfer')} className="mt-3 w-full rounded-xl bg-ink-950/80 text-slate-100 py-2 text-sm font-black active:scale-95">
+            💸 Send to another player by phone number
+          </button>
         </section>
 
         {short > 0 && (
@@ -362,8 +370,17 @@ export default function Wallet({ onNav, hint = null, haptic }) {
         {tab === 'cashout' && (
           <form onSubmit={cashOut} className={PANEL}>
             <h2 className="font-black">Cash out</h2>
-            <p className="text-xs text-slate-300">The amount is held from your balance right away and paid out once approved, usually within a day.</p>
-            <div className="flex flex-col gap-2">
+            <p className="text-xs text-slate-300">
+              The amount is held from your balance right away and paid out once approved, usually within a day.
+              {payout?.account && (
+                <>
+                  {' '}
+                  Payouts come from <span className="font-black text-slate-100">{payoutLabel} {payout.account}</span>
+                  {payout.name ? ` (${payout.name})` : ''}.
+                </>
+              )}
+            </p>
+            <div className={`flex flex-col gap-2 ${payoutMethods.length < 2 ? 'hidden' : ''}`}>
               {payoutMethods.map((m) => (
                 <label key={m.id} className={methodCard(outMethod === m.id)}>
                   <input type="radio" name="outMethod" value={m.id} checked={outMethod === m.id} onChange={() => setOutMethod(m.id)} className="accent-aqua-400" />
@@ -372,7 +389,20 @@ export default function Wallet({ onNav, hint = null, haptic }) {
                 </label>
               ))}
             </div>
-            <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder={ACCOUNT_HINT[outMethod] ?? 'Payout account'} className={INPUT} aria-label="Payout account" />
+            <label className="flex flex-col gap-1 text-xs text-slate-300">
+              <span className="font-black text-slate-100">📱 Which {payoutLabel} number should receive the money?</span>
+              <input value={account} onChange={(e) => setAccount(e.target.value)} inputMode="tel" required placeholder="09… or +2519…" className={INPUT} aria-label={`${payoutLabel} number to pay out to`} />
+            </label>
+            {profilePhone && account.trim() !== profilePhone && (
+              <button type="button" onClick={() => setAccount(profilePhone)} className="self-start rounded-lg bg-ink-700 border border-ink-600 px-3 py-1.5 text-xs font-black text-aqua-300 active:scale-95">
+                Use my number {profilePhone}
+              </button>
+            )}
+            {accountOk && outGross > 0 && (
+              <p className="text-xs text-lime-300">
+                {fmt(outNet)} {currency} will be sent to {payoutLabel} <span className="font-black">{account.trim()}</span> after approval.
+              </p>
+            )}
             <div className={`flex items-center ${INPUT} py-0`}>
               <input type="number" inputMode="decimal" min={wd.min} max={Math.min(wd.max, wallet?.balance ?? wd.max)} step="1" value={outAmount} onChange={(e) => setOutAmount(e.target.value)} placeholder={`${wd.min} – ${wd.max}`} className="flex-1 min-w-0 bg-transparent py-3 text-lg font-black outline-none" aria-label="Cash-out amount" />
               <button type="button" onClick={() => setOutAmount(String(Math.min(Math.floor(wallet?.balance ?? 0), wd.max)))} className="text-xs font-black text-aqua-300 mr-2">
@@ -394,7 +424,7 @@ export default function Wallet({ onNav, hint = null, haptic }) {
               )}
             </p>
             {messages}
-            <button type="submit" disabled={busy || !outMethod || !config || outGross <= 0} className="py-3 rounded-xl bg-gradient-to-r from-amber-300 to-orange-500 text-ink-950 font-black active:scale-95 transition-transform disabled:opacity-50">
+            <button type="submit" disabled={busy || !outMethod || !config || outGross <= 0 || !accountOk} className="py-3 rounded-xl bg-gradient-to-r from-amber-300 to-orange-500 text-ink-950 font-black active:scale-95 transition-transform disabled:opacity-50">
               {busy ? 'Sending…' : `Request ${outGross || 0} ${currency}`}
             </button>
             {pendingOut.length > 0 && (
@@ -443,6 +473,8 @@ export default function Wallet({ onNav, hint = null, haptic }) {
             <p className="text-sm text-slate-400">No activity yet.</p>
           )}
         </section>
+
+        </div>
 
         <BottomNav active="wallet" onNav={onNav} />
       </div>

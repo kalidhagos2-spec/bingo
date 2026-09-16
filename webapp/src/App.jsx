@@ -5,6 +5,9 @@ import Profile from './components/Profile.jsx';
 import Missions from './components/Missions.jsx';
 import Shop from './components/Shop.jsx';
 import Transfer from './components/Transfer.jsx';
+import Splash from './components/Splash.jsx';
+
+const SPLASH_MS = 1500;
 import { useTelegram } from './hooks/useTelegram.js';
 
 const SCREENS = ['play', 'wallet', 'transfer', 'profile', 'missions', 'shop'];
@@ -21,6 +24,13 @@ export default function App() {
   const [screen, setScreen] = useState(requestedScreen);
   const [suspended, setSuspended] = useState('');
   const [walletHint, setWalletHint] = useState(null);
+  const [booting, setBooting] = useState(true);
+
+  // Branded loading screen while the Telegram SDK and the first data settle.
+  useEffect(() => {
+    const t = setTimeout(() => setBooting(false), SPLASH_MS);
+    return () => clearTimeout(t);
+  }, []);
 
   // The server refuses a suspended player (API 403 / socket handshake); show why instead of the game.
   useEffect(() => {
@@ -28,6 +38,8 @@ export default function App() {
     window.addEventListener('tgb-suspended', onSuspended);
     return () => window.removeEventListener('tgb-suspended', onSuspended);
   }, []);
+
+  if (booting) return <Splash />;
 
   if (suspended) {
     return (

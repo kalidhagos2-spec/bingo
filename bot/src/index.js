@@ -5,7 +5,7 @@ import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import { UserStore } from './users.js';
 import { createPool, migrate } from './db/pool.js';
-import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, suggestedName, prompts } from './signup.js';
+import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, prompts } from './signup.js';
 
 const { BOT_TOKEN, WEBAPP_URL, DATABASE_URL } = process.env;
 const API_URL = (process.env.API_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -35,8 +35,8 @@ const screenUrl = (screen) => `${WEBAPP_URL}${WEBAPP_URL.includes('?') ? '&' : '
 const mainKeyboard = () =>
   Markup.inlineKeyboard([
     [Markup.button.webApp('🎮 Play Bingo', screenUrl('play'))],
-    [Markup.button.webApp('💵 Wallet', screenUrl('wallet')), Markup.button.webApp('👤 Profile', screenUrl('profile'))],
-    [Markup.button.callback('❓ How to play', 'help')],
+    [Markup.button.webApp('💵 Wallet', screenUrl('wallet')), Markup.button.webApp('💸 Send money', screenUrl('transfer'))],
+    [Markup.button.webApp('👤 Profile', screenUrl('profile')), Markup.button.callback('❓ How to play', 'help')],
   ]);
 
 const displayName = (u) => u.name || u.firstName || u.username || 'player';
@@ -67,13 +67,11 @@ async function syncProfile(user) {
 
 // ---------- sign-up flow ----------
 
+/** One step: the name comes from Telegram; the player only shares (or skips) their phone. */
 async function beginSignup(ctx, user) {
   const next = begin(user);
   await store.put(next);
-  await ctx.reply(prompts.name(next), {
-    parse_mode: 'Markdown',
-    ...Markup.keyboard([[suggestedName(next)]]).oneTime().resize(),
-  });
+  await askPhone(ctx, prompts.phone(next));
 }
 
 async function askPhone(ctx, text) {
@@ -146,7 +144,7 @@ async function showProfile(ctx) {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
         [Markup.button.webApp('👤 Open profile', screenUrl('profile'))],
-        [Markup.button.callback(isComplete(user) ? '✏️ Edit profile' : '📝 Finish sign-up', 'signup')],
+        [Markup.button.callback(isComplete(user) ? '📱 Update phone number' : '📝 Finish sign-up', 'signup')],
       ]),
     },
   );
@@ -172,7 +170,7 @@ bot.action('help', async (ctx) => {
       '1. Press *Play Bingo* and pick a table (10, 20 or 50 ETB entry from your wallet).',
       '2. Pick up to 4 cartelas (1–400) before the 40 s timer runs out; each one pays the entry.',
       '3. Numbers are called automatically — tap them on your card.',
-      '4. Press *BINGO!* when every number on your card is marked to win the prize. 🏆',
+      '4. Press *BINGO!* as soon as a cartela has a full row, column, diagonal or all four corners marked. 🏆',
     ].join('\n'),
     { parse_mode: 'Markdown' },
   );

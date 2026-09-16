@@ -41,7 +41,12 @@ test('validation rejects out-of-range, non-integer and inconsistent values', () 
   assert.deepEqual(validate({ unknown: 1 }, current), {}); // unknown keys are ignored
   assert.equal(SCHEMA.length, 20);
   assert.deepEqual(validate({ boaAccount: ' 1000000000 ' }, current), { boaAccount: '1000000000' });
-  assert.throws(() => validate({ boaName: 'x'.repeat(61) }, current), /at most 60/);
+  assert.throws(() => validate({ boaName: 'x'.repeat(121) }, current), /at most 120/);
+  // House accounts: several per rail, names must be names, numbers must be numbers.
+  assert.deepEqual(validate({ telebirrAccount: '0937766034, 0960524040', telebirrName: 'Aman,Kalid' }, current), { telebirrAccount: '0937766034, 0960524040', telebirrName: 'Aman,Kalid' });
+  assert.throws(() => validate({ telebirrName: '0937766034' }, current), /account holder's name .* not a number/);
+  assert.throws(() => validate({ telebirrAccount: 'Aman' }, current), /phone or account numbers only/);
+  assert.deepEqual(validate({ cbebirrAccount: '', cbebirrName: '' }, current), { cbebirrAccount: '', cbebirrName: '' }); // clearing a rail is fine
 });
 
 test('updates apply live to config, store fees, lobby stakes and existing rooms, and persist', async (t) => {

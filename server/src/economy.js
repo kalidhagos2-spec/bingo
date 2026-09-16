@@ -12,7 +12,6 @@ export const MISSIONS = Object.freeze([
   { id: 'win1', title: 'Win a round', key: 'wins', goal: 1, reward: 150, icon: '🏆' },
   { id: 'mark50', title: 'Mark 50 numbers', key: 'marks', goal: 50, reward: 80, icon: '✅' },
   { id: 'paid1', title: 'Play a paid table', key: 'paid', goal: 1, reward: 120, icon: '💵' },
-  { id: 'bonus', title: 'Claim the daily bonus', key: 'bonus', goal: 1, reward: 30, icon: '🎁' },
 ]);
 
 export const THEMES = Object.freeze(['classic', 'emerald', 'sunset', 'neon', 'gold']);
@@ -22,8 +21,6 @@ export const SHOP = Object.freeze([
   { id: 'theme_sunset', kind: 'theme', theme: 'sunset', title: 'Sunset cartela', desc: 'Orange & pink card skin', price: 800, icon: '🌅' },
   { id: 'theme_neon', kind: 'theme', theme: 'neon', title: 'Neon cartela', desc: 'Cyan & magenta card skin', price: 1200, icon: '💜' },
   { id: 'theme_gold', kind: 'theme', theme: 'gold', title: 'Gold cartela', desc: 'The VIP look', price: 2500, icon: '👑' },
-  { id: 'shield', kind: 'consumable', title: 'Streak shield', desc: 'Keeps your daily streak if you miss one day', price: 300, icon: '🛡️' },
-  { id: 'doubler', kind: 'consumable', title: 'Bonus doubler', desc: 'Doubles your next daily bonus', price: 400, icon: '✨' },
 ]);
 
 export const dayKey = (now) => new Date(now).toISOString().slice(0, 10);

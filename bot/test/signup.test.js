@@ -1,61 +1,56 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, normalizePhone, suggestedName } from '../src/signup.js';
+import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, normalizePhone, suggestedName, prompts } from '../src/signup.js';
 
 const fresh = { id: 42, firstName: 'Abebe', lastName: 'Kebede', username: 'abebe', name: null, phone: null, signup: null, signedUpAt: null };
 
-test('sign-up walks name -> phone -> done and marks the profile complete', () => {
-  let user = begin(fresh);
-  assert.equal(user.signup.step, STEP.NAME);
+test('sign-up is one step: the Telegram name is used and the phone finishes it', () => {
+  const user = begin(fresh);
+  assert.equal(user.signup.step, STEP.PHONE);
+  assert.equal(user.name, 'Abebe Kebede'); // filled in from Telegram, no question asked
   assert.equal(isComplete(user), false);
   assert.equal(hasSignedUp(user), false);
+  assert.match(prompts.phone(user), /Welcome, \*Abebe Kebede\*/);
 
-  let r = applyText(user, 'A');
-  assert.match(r.reply, /between 2 and 32/);
-  assert.equal(r.user.signup.step, STEP.NAME);
-
-  r = applyText(user, '  Abebe K  ');
-  assert.equal(r.user.name, 'Abebe K');
-  assert.equal(r.user.signup.step, STEP.PHONE);
-  assert.match(r.reply, /Step 2 of 2/);
-
-  const bad = applyText(r.user, 'call me');
+  const bad = applyText(user, 'call me');
   assert.match(bad.reply, /does not look like a phone/);
   assert.equal(bad.done, false);
 
-  const done = applyText(r.user, '0900 000 000');
+  const done = applyText(user, '0900 000 000');
   assert.equal(done.done, true);
   assert.equal(done.user.phone, '+251900000000');
   assert.equal(done.user.signup, null);
   assert.ok(done.user.signedUpAt);
   assert.equal(hasSignedUp(done.user), true);
   assert.equal(isComplete(done.user), true);
-  assert.match(done.reply, /Profile saved, \*Abebe K\*/);
+  assert.match(done.reply, /registered, \*Abebe Kebede\*/);
   assert.match(done.reply, /\+251900000000/);
-  assert.doesNotMatch(done.reply, /email/i);
+});
+
+test('a name the player already chose is kept when sign-up restarts', () => {
+  const user = begin({ ...fresh, name: 'Abe' });
+  assert.equal(user.name, 'Abe');
 });
 
 test("a shared contact finishes sign-up, but only the user's own contact", () => {
-  const atPhone = applyText(begin(fresh), 'Abebe').user;
-  const other = applyContact(atPhone, { phone_number: '+251900000000', user_id: 7 });
+  const user = begin(fresh);
+  const other = applyContact(user, { phone_number: '+251900000000', user_id: 7 });
   assert.equal(other.done, false);
   assert.match(other.reply, /your own/);
-  const mine = applyContact(atPhone, { phone_number: '251900000000', user_id: 42 });
+  const mine = applyContact(user, { phone_number: '251900000000', user_id: 42 });
   assert.equal(mine.done, true);
   assert.equal(mine.user.phone, '+251900000000');
   assert.equal(isComplete(mine.user), true);
 });
 
 test('skipping the phone finishes sign-up but leaves the profile incomplete', () => {
-  const atPhone = applyText(begin(fresh), 'Abebe').user;
-  const done = applyText(atPhone, SKIP);
+  const done = applyText(begin(fresh), SKIP);
   assert.equal(done.done, true);
   assert.equal(done.user.phone, null);
   assert.equal(done.user.signup, null);
   assert.equal(hasSignedUp(done.user), true);
   assert.equal(isComplete(done.user), false);
   assert.match(done.reply, /No phone yet/);
-  // Adding the phone later (from the profile screen) completes the profile.
   assert.equal(isComplete({ ...done.user, phone: '+251900000000' }), true);
 });
 
@@ -84,4 +79,5 @@ test('phone normalisation and suggested names', () => {
   assert.equal(suggestedName(fresh), 'Abebe Kebede');
   assert.equal(suggestedName({ id: 5, username: 'sara' }), 'sara');
   assert.equal(suggestedName({ id: 5 }), 'Player 5');
+  assert.equal(suggestedName({ id: 5, firstName: 'x'.repeat(40) }).length, 32);
 });

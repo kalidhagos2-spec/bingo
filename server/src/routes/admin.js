@@ -1,16 +1,25 @@
 import { Router, json } from 'express';
 import { dashboardPage } from './adminDashboard.js';
+import { houseAccounts } from './payments.js';
+import { verifyPayoutReceipt } from '../verifier.js';
+import { STATUS } from '../store.js';
 
 /**
  * /api/admin — operator view of the house: fees kept from stakes and totals.
  * Protected by ADMIN_TOKEN (header `x-admin-token`); in dev mode without a token it is open.
  */
-export function adminRouter({ config, store, manager = null, kick = () => {}, closeRoom = null, settings = null, announcements = null }) {
+/** Deposits and cash-outs are shown with the player's display name and the house account's name. */
+function decorate(config, store, rows) {
+  const names = new Map(houseAccounts(config).map((a) => [a.account, a.name]));
+  return rows.map((t) => ({ ...t, playerName: store.profile(t.userId)?.name ?? null, accountName: names.get(t.account) ?? null }));
+}
+
+export function adminRouter({ config, store, manager = null, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null }) {
   const router = Router();
 
   // The page itself is public; every data call from it carries the admin token.
   router.get('/dashboard', (_req, res) => {
-    res.type('html').send(dashboardPage({ currency: config.currency }));
+    res.type('html').send(dashboardPage({ currency: config.currency, payout: config.payout, gateway: Boolean(payout?.available) }));
   });
 
   router.use((req, res, next) => {
@@ -130,7 +139,18 @@ export function adminRouter({ config, store, manager = null, kick = () => {}, cl
   router.get('/deposits', async (req, res) => {
     const status = String(req.query.status ?? 'pending');
     // depositsByStatus already returns newest-first.
-    res.json({ deposits: await store.depositsByStatus(status, 100) });
+    res.json({ deposits: decorate(config, store, await store.depositsByStatus(status, 100)) });
+  });
+
+  /** Re-runs the Telebirr receipt check for one pending deposit and credits it if the receipt matches. */
+  router.post('/deposits/:ref/verify', async (req, res) => {
+    if (!verifier) return res.status(503).json({ error: 'Receipt verification is not attached' });
+    try {
+      const { tx, check } = await verifier.checkOne(req.params.ref);
+      res.json({ ...tx, check });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   router.post('/deposits/:ref/approve', async (req, res) => {
@@ -152,12 +172,38 @@ export function adminRouter({ config, store, manager = null, kick = () => {}, cl
   router.get('/withdrawals', async (req, res) => {
     const status = String(req.query.status ?? 'pending');
     // withdrawalsByStatus already returns newest-first.
-    res.json({ withdrawals: await store.withdrawalsByStatus(status, 100) });
+    res.json({ withdrawals: decorate(config, store, await store.withdrawalsByStatus(status, 100)) });
   });
 
+  /**
+   * Pays a cash-out. Three ways, in order of preference:
+   *  - no transaction id + Telebirr gateway configured: the money is sent through the
+   *    gateway now and its transaction number is recorded (`verified: gateway`);
+   *  - a transaction id of a payout sent by hand: its public receipt must show the id, the
+   *    net amount and the player's number (`verified: receipt`), else 409 with the reason;
+   *  - `force: true` with an id: recorded as paid without the check (`verified: operator`).
+   */
   router.post('/withdrawals/:ref/approve', json(), async (req, res) => {
     try {
-      res.json(await store.resolveWithdrawal(req.params.ref, { approved: true, providerRef: req.body?.providerRef ?? null }));
+      const tx = await store.findByRef(req.params.ref);
+      if (!tx || tx.type !== 'withdraw') return res.status(404).json({ error: 'Withdrawal not found' });
+      if (tx.status !== STATUS.PENDING) return res.status(400).json({ error: `Withdrawal already ${tx.status}` });
+      let providerRef = String(req.body?.providerRef ?? '').trim() || null;
+      let verified = 'operator';
+      if (!providerRef && payout?.available && tx.method === payout.id) {
+        const sent = await payout.send({ phone: tx.account, amount: tx.payout, ref: tx.ref });
+        providerRef = sent.providerRef;
+        verified = 'gateway';
+      } else if (!providerRef) {
+        return res.status(400).json({ error: 'Enter the transaction id of the payout you sent (or configure the Telebirr gateway to send it automatically)' });
+      } else if (tx.method === 'telebirr' && !req.body?.force) {
+        const check = await verifyPayoutReceipt({ txId: providerRef, amount: tx.payout, account: tx.account });
+        if (!check.ok) return res.status(409).json({ error: `Receipt check failed: ${check.reason}`, check });
+        verified = 'receipt';
+      }
+      const paid = await store.resolveWithdrawal(tx.ref, { approved: true, providerRef });
+      await store.update(tx.ref, { verified });
+      res.json({ ...paid, verified });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }

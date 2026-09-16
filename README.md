@@ -10,7 +10,7 @@ React and Tailwind CSS.
 - ✅ Bot onboarding, sign-up (name · phone) & Mini App launch
 - ✅ Backend (Node.js / Express) with wallet + Ethiopian payment gateways
 - ✅ Live tables hosted by the house (Socket.io), cartelas, BINGO! claims, prize pools
-- ✅ Daily bonus, missions, coin shop with cartela skins
+- ✅ Missions and a coin shop with cartela skins
 - ✅ Persistent database (PostgreSQL, shared by every server instance)
 
 ## Project layout
@@ -26,7 +26,7 @@ tg-bingo/
 ├── server/     Game server (Express + Socket.io)
 │   ├── src/game/      bingo.js (cards, cartelas), room.js (table), manager.js (lobby)
 │   ├── src/routes/    payments, profile, economy, admin (house)
-│   ├── src/economy.js daily bonus · missions · shop rules
+│   ├── src/economy.js missions · shop rules
 │   ├── src/auth.js (Telegram initData), store.js, realtime.js
 │   ├── src/db/        schema.sql + pool.js (PostgreSQL — shared with the bot)
 │   ├── scripts/       one-off import of an old server/data/payments.json, if you have one
@@ -43,10 +43,11 @@ tg-bingo/
 
 **Bot**
 - `/start` registers the user by Telegram ID and, the first time, walks them through a
-  two-step **sign-up**: display name (one-tap suggestion from their Telegram name) and
-  phone number (Telegram *share contact* button, typed number, or *Skip for now*). The
-  phone is what deposits, cash-outs and player-to-player transfers are matched on. The
-  flow is a small state machine in `bot/src/signup.js` (unit-tested with `npm test`).
+  one-step **sign-up**: the display name is taken from their Telegram name (editable
+  later on the Profile screen) and they share their phone number (Telegram *share
+  contact* button, typed number, or *Skip for now*). The phone is what deposits,
+  cash-outs and player-to-player transfers are matched on. The flow is a small state
+  machine in `bot/src/signup.js` (unit-tested with `npm test`).
 - The collected fields are pushed to the game server (`POST /api/profile/sync`, signed
   with the bot token) so the Mini App's **Profile** screen shows and edits the same
   data, and players appear in rooms under their chosen display name.
@@ -59,22 +60,23 @@ tg-bingo/
   **JOIN** button (**DEPOSIT** while the balance is below the stake), a leaderboard, and a Missions ·
   Shop · Profile bottom bar. Players who have not finished sign-up see a *Finish your
   sign-up* banner and a badge on **Profile**.
-- **Daily Bonus, Missions and Shop** (coins, a soft currency that never converts to ETB):
-  the lobby's Daily Bonus card pays 50 → 300 coins along a 7-day streak (once per UTC
-  day); **Missions** are daily goals fed by real play (play 3 rounds, win a round, mark
-  50 numbers, play a paid table, claim the bonus) with coin rewards; the **Shop** sells
-  cartela skins (Emerald, Sunset, Neon, Gold — applied to your card in every game) and
-  boosters (streak shield, bonus doubler). Winning **Free Bingo** pays `FREE_BINGO_COINS`
-  (default 50). API: `GET /api/economy`, `POST /api/economy/bonus/claim`,
+- **Missions and Shop** (coins, a soft currency that never converts to ETB): **Missions**
+  are daily goals fed by real play (play 3 rounds, win a round, mark 50 numbers, play a
+  paid table) with coin rewards; the **Shop** sells cartela skins (Emerald, Sunset, Neon,
+  Gold — applied to your card in every game). API: `GET /api/economy`,
   `POST /api/economy/missions/:id/claim`, `POST /api/economy/shop/:id/buy`,
-  `POST /api/economy/theme/:theme`.
+  `POST /api/economy/theme/:theme`. There is no daily bonus card any more.
+- **Loading screen.** The Mini App opens on a branded splash (logo, bingo ball, spinner)
+  for about 1.5 s while the Telegram SDK and the first data settle.
 - **Sign-in.** Players are identified by Telegram `initData` (verified against
   `BOT_TOKEN` on every API call and socket handshake). There is no separate login: the
   game is played from inside Telegram. Outside Telegram only dev mode (`DEV_ALLOW_ANON`)
   serves guest players, for local testing.
 - **Profile** screen: avatar, display name and phone (editable, `PUT /api/profile`),
-  Telegram username and id, sign-up status, and stats (games, wins, ETB won) that the
-  server records at the end of every round (`GET /api/profile/leaderboard`).
+  Telegram username and id, sign-up status, stats (games, wins, ETB won) that the
+  server records at the end of every round (`GET /api/profile/leaderboard`), and a
+  **Log out & close** button that forgets the device's preferences and closes the Mini
+  App (the account itself is the Telegram account).
 - **Send** screen (bottom bar): in-game wallet transfer to another player by the phone
   number they signed up with. The recipient's name is shown before sending
   (`GET /api/payments/recipient?phone=`), the money moves instantly and fee-free
@@ -155,10 +157,14 @@ numbered cartelas, a called-number board, a BINGO! claim button):
   is a fixed card, so cartela #17 is the same card everywhere. The 10-column grid shows
   taken numbers in red with the owner's name, yours in green; tapping one of yours gives
   it back. On a paid table every cartela is charged from the wallet when picked and
-  refunded when released or if you leave before the round starts. During the round all
-  your cartelas are shown stacked beside the master board, each marked separately, and
-  BINGO! wins on whichever of them is complete. Players without a cartela watch the round
-  and can register for the next one.
+  refunded when released or if you leave before the round starts. During the round the
+  layout depends on how many you hold: with one or two, the 75-number master board sits
+  on the left and your cards on the right; with three or four, the board is dropped and
+  the cards fill the screen in a 2×2 grid under a slim call strip. Tapping a called
+  number marks it on every card of yours that has it, and the **AUTO** switch in the
+  bottom bar (on by default, remembered per device) marks called numbers for you. BINGO!
+  wins on whichever card is complete. Players without a cartela watch the round and can
+  register for the next one.
 - **Timer.** Once `MIN_PLAYERS` players hold a cartela a **40 s** countdown starts
   (`COUNTDOWN_MS`). The **house hosts every table**: the server starts the round when the
   timer ends and calls the numbers; no player can start or control a game. **Start Game** takes you to the
@@ -167,9 +173,10 @@ numbered cartelas, a called-number board, a BINGO! claim button):
   the left (called numbers red, latest green), your cartela with the **CALL** box on the
   right, and a LEAVE · REFRESH · **BINGO!** · sound bar at the bottom. The server calls
   a number every 4 s and validates each mark (called and on your card).
-- **Winning.** Press **BINGO!** once every number on your card is marked (`FULL_CARD`,
-  default) — or after `LINES_TO_WIN` lines with `FULL_CARD=false`. A premature claim is
-  rejected with your progress. The winner gets the pool: stakes minus
+- **Winning.** Press **BINGO!** as soon as one of your cartelas has a complete row, column
+  or diagonal (`LINES_TO_WIN`, default 1) or all **four corners** marked. `FULL_CARD=true`
+  switches to the stricter rule of every number on the card. A premature claim is
+  rejected with your progress; the winner modal shows the winning line or corners. The winner gets the pool: stakes minus
   `HOUSE_CUT_PERCENT`, capped at `MAX_PRIZE` (default **3000 ETB**) — the house keeps
   **20 %** of every player's stake by default (not shown to players) and the
   fee of each played round is written to a house ledger (`GET /api/admin/house`, header
@@ -206,7 +213,9 @@ them top it up through Ethiopian payment rails:
   to fund a wallet; there is no sandbox or mock gateway.
 - Requests from the Mini App are authenticated by verifying Telegram `initData`
   against `BOT_TOKEN`; a wallet can only be credited after the gateway confirms.
-- The house keeps `DEPOSIT_FEE_PERCENT` (default **2 %**) of every confirmed top-up: a
+- Deposits are credited in full by default (`DEPOSIT_FEE_PERCENT=0`); the house fee is
+  taken on cash-outs instead (`WITHDRAW_FEE_PERCENT`, default **2 %**). If a deposit fee
+  is set, the house keeps that share of every confirmed top-up: a
   100 ETB payment credits 98 ETB, the wallet screen shows the fee before paying, the
   ledger entry records `fee` and `credited`, and the fee lands in the house ledger
   (`GET /api/admin/house` lists round fees and deposit fees separately).
@@ -226,7 +235,21 @@ CBE Birr / Bank of Abyssinia accounts, each card with the account name, number a
 per rail, also editable in the dashboard *Settings → House accounts*). The player copies
 a number, transfers the amount, then pastes the **transaction id** from the receipt (a
 **PASTE** button reads the clipboard). `POST /api/payments/deposit {method, account,
-amount, txId}` records it as a pending deposit; an id can confirm one deposit only. When
+amount, txId}` records it as a pending deposit; an id can confirm one deposit only.
+Telebirr receipts are checked against Ethio Telecom's public receipt page at submit time
+and then re-checked every `RECEIPT_RECHECK_MS` (default 3 min) for `RECEIPT_RECHECK_HOURS`
+(default 24 h), so a receipt that is published a little later still credits the wallet
+without anyone touching it; the dashboard also has a **Verify** button per deposit
+(`POST /api/admin/deposits/:ref/verify`). The Deposits tab shows the player's name and
+which house account (with its name) the money went to.
+
+Cash-outs: approving one in the dashboard asks for the Telebirr transaction id of the
+payout you sent; the server checks that receipt (id, net amount, the player's number)
+before marking it paid, and refuses with the reason otherwise (an operator can override).
+With `TELEBIRR_B2C_URL` and the merchant credentials configured, leaving the id empty
+sends the payout through the Telebirr disbursement gateway instead and records its
+transaction number (`server/src/payouts/telebirr.js`; confirm the endpoint and field
+names against your merchant contract). When
 no house account is configured the tab says deposits open soon. Paid tables in the lobby
 show **DEPOSIT** instead of **JOIN** while the balance is below the stake, and that
 button opens this tab with the missing amount pre-filled. Online checkout (**Pay online**)
@@ -245,7 +268,7 @@ appears alongside only when a gateway is configured.
 - Players request a payout from the wallet screen: amount (`MIN_WITHDRAW`–`MAX_WITHDRAW`,
   default 50–5000 ETB), payout method (Telebirr, CBE Birr, Bank of Abyssinia) and the
   phone or account number. The amount is **held** from the wallet at once so it cannot
-  be staked twice; `WITHDRAW_FEE_PERCENT` (default 0) is kept by the house on payout.
+  be staked twice; `WITHDRAW_FEE_PERCENT` (default 2 %) is kept by the house on payout.
 - Requests wait in an operator queue: `GET /api/admin/withdrawals?status=pending`, then
   `POST /api/admin/withdrawals/:ref/approve {providerRef}` after paying the player through
   the gateway's merchant tools, or `POST /api/admin/withdrawals/:ref/reject {reason}` to

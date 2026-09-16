@@ -21,7 +21,7 @@ const list = (s) => String(s ?? '').split(',').map((x) => x.trim());
  * `HOUSE_<METHOD>_NAME` may hold several comma-separated values (paired by position), so
  * a rail can show more than one receiving number, e.g. two Telebirr wallets.
  */
-const houseAccounts = (config) =>
+export const houseAccounts = (config) =>
   METHODS.flatMap((m) => {
     const cfg = config.houseAccounts?.[m.id] ?? {};
     const names = list(cfg.name);
@@ -93,7 +93,8 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
       // Online checkout is offered only for methods with a configured gateway; cash-outs
       // and transfer deposits work on every rail.
       methods: describeProviders(providers),
-      payoutMethods: METHODS.map(({ id, label, description }) => ({ id, label, description })),
+      payoutMethods: METHODS.filter((m) => !config.payout?.method || m.id === config.payout.method).map(({ id, label, description }) => ({ id, label, description })),
+      payout: { method: config.payout?.method || null, account: config.payout?.account || null, name: config.payout?.name || null },
       transfer: { accounts: houseAccounts(config), receiptUrl: TELEBIRR_RECEIPT_URL },
     });
   });
@@ -194,9 +195,18 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
 
   router.post('/withdraw', json(), async (req, res) => {
     const { method, amount } = req.body ?? {};
-    const account = String(req.body?.account ?? '').trim();
+    let account = String(req.body?.account ?? '').trim();
     const value = Math.round(Number(amount) * 100) / 100;
+    // Mobile-money rails pay to a phone number: insist on a valid one, stored normalised.
+    if (method === 'telebirr' || method === 'cbebirr') {
+      const phone = normalizePhone(account);
+      if (!phone) return res.status(400).json({ error: `Enter the ${method === 'telebirr' ? 'Telebirr' : 'CBE Birr'} phone number to pay out to, e.g. 0900000000` });
+      account = phone;
+    }
     if (!isMethod(method)) return res.status(400).json({ error: 'Unknown payout method' });
+    if (config.payout?.method && method !== config.payout.method) {
+      return res.status(400).json({ error: `Cash-outs are paid by ${METHODS.find((m) => m.id === config.payout.method)?.label ?? config.payout.method} only` });
+    }
     if (!Number.isFinite(value) || value < config.minWithdraw || value > config.maxWithdraw) {
       return res.status(400).json({ error: `Amount must be between ${config.minWithdraw} and ${config.maxWithdraw} ${config.currency}` });
     }

@@ -129,7 +129,7 @@ test('marking validates called numbers and card membership; with fullCard off a 
   const p1 = room.players.get(1).cards[0];
   const notCalled = p1.cells.find((c) => c.value !== null && !room.called.includes(c.value)).value;
   assert.throws(() => room.mark(1, notCalled), /not been called/);
-  assert.throws(() => room.claim(1), /Not yet: 0\/1 lines/);
+  assert.throws(() => room.claim(1), /Not yet: complete a row, column, diagonal or all four corners/);
 
   const row = p1.cells.slice(0, 5).map((c) => c.value);
   while (!row.every((n) => room.called.includes(n))) assert.ok(timers.fire());
@@ -147,8 +147,30 @@ test('marking validates called numbers and card membership; with fullCard off a 
   assert.equal(room.publicState().players.find((p) => p.id === 1).marked, 5);
 });
 
-test('by default BINGO! is only accepted once every number on the card is marked', () => {
+test('the four corners win by default, and a full line is reported as the winning pattern', () => {
   const { room, timers, events } = makeRoom();
+  room.join(u1);
+  room.join(u2);
+  room.choose(1, 4);
+  room.choose(2, 6);
+  room.start();
+  const p1 = room.players.get(1).cards[0];
+  const corners = [0, 4, 20, 24].map((i) => p1.cells[i].value);
+  while (!corners.every((n) => room.called.includes(n))) assert.ok(timers.fire());
+  for (const n of corners.slice(0, 3)) assert.equal(room.mark(1, n).canClaim, false);
+  const last = room.mark(1, corners[3]);
+  assert.equal(last.corners, true);
+  assert.equal(last.canClaim, true);
+  assert.deepEqual(last.pattern, [0, 4, 20, 24]);
+  room.claim(1);
+  assert.equal(room.phase, PHASE.FINISHED);
+  assert.deepEqual(room.winner.line, [0, 4, 20, 24]);
+  assert.equal(room.winner.full, false);
+  assert.deepEqual(events.find((e) => e.event === 'game:over').payload.winner.line, [0, 4, 20, 24]);
+});
+
+test('with FULL_CARD on, BINGO! is only accepted once every number on the card is marked', () => {
+  const { room, timers, events } = makeRoom({ fullCard: true });
   room.join(u1);
   room.join(u2);
   room.choose(1, 4);

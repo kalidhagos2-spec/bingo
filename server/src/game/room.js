@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { cardForCartela, initialMarks, completedLines, drawOrder, letterFor, CARTELA_COUNT } from './bingo.js';
+import { cardForCartela, initialMarks, completedLines, cornersComplete, winningPattern, drawOrder, letterFor, CARTELA_COUNT } from './bingo.js';
 
 export const PHASE = Object.freeze({
   WAITING: 'waiting', // registration open, not enough players have picked a cartela yet
@@ -11,8 +11,8 @@ export const PHASE = Object.freeze({
 export const DEFAULT_RULES = Object.freeze({
   minPlayers: 2,
   maxPlayers: 8,
-  fullCard: true, // round is won by claiming BINGO with every number on the card marked
-  linesToWin: 1, // used only when fullCard is false
+  fullCard: false, // true: BINGO needs every number marked; false: a line or the four corners wins
+  linesToWin: 1, // rows / columns / diagonals needed when fullCard is false (four corners always count)
   callIntervalMs: 4000,
   countdownMs: 40000, // time players get to pick cartelas
   restartDelayMs: 8000,
@@ -275,9 +275,11 @@ export class Room {
 
   cardProgress(card) {
     const lines = completedLines(card.marks);
+    const corners = cornersComplete(card.marks);
     const full = card.marks.every(Boolean);
-    const won = this.rules.fullCard ? full : lines.length >= this.rules.linesToWin;
-    return { cartela: card.cartela, marks: card.marks, lines: lines.length, marked: card.marks.filter(Boolean).length - 1, full, canClaim: won };
+    const pattern = winningPattern(card.marks, this.rules.linesToWin);
+    const won = this.rules.fullCard ? full : Boolean(pattern);
+    return { cartela: card.cartela, marks: card.marks, lines: lines.length, corners, pattern, marked: card.marks.filter(Boolean).length - 1, full, canClaim: won };
   }
 
   /** Progress of every cartela the player holds, plus the best one for the BINGO! button. */
@@ -295,10 +297,14 @@ export class Room {
     if (cartela !== null && !chosen) throw new Error(`You do not hold cartela ${cartela}`);
     if (!chosen?.canClaim) {
       const best = chosen ?? p;
-      throw new Error(this.rules.fullCard ? `Not yet: ${best.marked}/${best.marks.length - 1} marked` : `Not yet: ${best.lines}/${this.rules.linesToWin} lines`);
+      throw new Error(
+        this.rules.fullCard
+          ? `Not yet: ${best.marked}/${best.marks.length - 1} marked`
+          : `Not yet: complete a row, column, diagonal or all four corners (${best.marked}/${best.marks.length - 1} marked)`,
+      );
     }
     const card = player.cards.find((c) => c.cartela === chosen.cartela);
-    this.finish(player, completedLines(card.marks)[0] ?? null, chosen.full, card);
+    this.finish(player, chosen.pattern ?? completedLines(card.marks)[0] ?? null, chosen.full, card);
     return p;
   }
 

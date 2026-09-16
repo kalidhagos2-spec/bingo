@@ -13,6 +13,8 @@ import { adminRouter } from './routes/admin.js';
 import { createSettings } from './settings.js';
 import { createAnnouncements } from './announcements.js';
 import { attachRealtime } from './realtime.js';
+import { createDepositVerifier } from './verifier.js';
+import { createTelebirrPayout } from './payouts/telebirr.js';
 
 if (!config.publicUrl) {
   console.warn('[server] PUBLIC_URL is not set; payment return/webhook URLs will be relative and only work locally.');
@@ -83,7 +85,13 @@ app.get('/api/announcements', auth, async (_req, res) => res.json({ announcement
 
 const settings = createSettings({ config, store, manager });
 if (Object.keys(settings.overrides()).length) console.log('[settings] operator overrides active:', Object.keys(settings.overrides()).join(', '));
-app.use('/api/admin', adminRouter({ config, store, manager, kick, closeRoom, settings, announcements }));
+// Pending Telebirr deposits are re-checked against the public receipt until they confirm.
+const verifier = createDepositVerifier({ store, intervalMs: config.receiptRecheckMs, maxAgeHours: config.receiptRecheckHours });
+if (!config.autoApproveDeposits) verifier.start();
+console.log(`[verifier] Telebirr receipts re-checked every ${Math.round(config.receiptRecheckMs / 1000)}s for ${config.receiptRecheckHours}h`);
+const payout = createTelebirrPayout(config.telebirr);
+console.log(`[payouts] Telebirr disbursement gateway: ${payout.available ? 'configured' : 'not configured (cash-outs paid by hand, confirmed by receipt id)'}`);
+app.use('/api/admin', adminRouter({ config, store, manager, kick, closeRoom, settings, announcements, verifier, payout }));
 
 app.use((err, _req, res, _next) => {
   console.error('[server] unhandled error:', err);
@@ -106,6 +114,7 @@ async function shutdown(signal) {
     process.exit(1);
   }, 10_000);
   try {
+    verifier.stop();
     io.close(); // disconnects sockets and stops accepting new ones
     await new Promise((resolve) => httpServer.close(resolve)); // stop accepting new HTTP requests
     await store.flush(); // let any in-flight wallet/profile/settings writes reach Postgres

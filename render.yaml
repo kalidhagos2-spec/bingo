@@ -45,6 +45,30 @@ services:
         sync: false
       - key: HOUSE_CBEBIRR_NAME
         sync: false
+      # Cash-outs are paid from this Telebirr account (shown to players and in the dashboard).
+      - key: PAYOUT_METHOD
+        value: telebirr
+      - key: PAYOUT_ACCOUNT
+        sync: false
+      - key: PAYOUT_NAME
+        sync: false
+      # Fees and game rules (code defaults shown; change here or later in the dashboard Settings).
+      - key: DEPOSIT_FEE_PERCENT
+        value: "0"
+      - key: WITHDRAW_FEE_PERCENT
+        value: "2"
+      - key: HOUSE_CUT_PERCENT
+        value: "20"
+      - key: MAX_PRIZE
+        value: "3000"
+      - key: STAKES
+        value: "10,20,50"
+      - key: CARTELA_COUNT
+        value: "400"
+      - key: MAX_CARTELAS
+        value: "4"
+      - key: AUTO_APPROVE_DEPOSITS
+        value: "false"
       - key: DEV_ALLOW_ANON
         value: "false"
       # PUBLIC_URL / PORT are not listed here: Render injects RENDER_EXTERNAL_URL and PORT

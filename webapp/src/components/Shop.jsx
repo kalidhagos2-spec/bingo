@@ -3,7 +3,7 @@ import { api } from '../lib/api.js';
 import { ScreenHeader, BottomNav } from './Nav.jsx';
 import { themeFor } from '../lib/themes.js';
 
-/** Coin shop: cartela skins (cosmetic) and daily-bonus boosters. */
+/** Coin shop: cartela skins (cosmetic). */
 export default function Shop({ onNav, haptic }) {
   const [eco, setEco] = useState(null);
   const [error, setError] = useState('');
@@ -33,12 +33,13 @@ export default function Shop({ onNav, haptic }) {
   const boosts = items.filter((i) => i.kind === 'consumable');
 
   return (
-    <main className="min-h-full flex flex-col items-center gap-3 px-3 py-4 bg-ink-900 text-slate-100 animate-fade-in">
-      <div className="w-full max-w-sm flex flex-col gap-3">
+    <main className="h-[100dvh] overflow-hidden flex flex-col items-center gap-3 px-3 py-3 bg-ink-900 text-slate-100 animate-fade-in">
+      <div className="w-full max-w-sm flex-1 min-h-0 flex flex-col gap-3">
         <ScreenHeader onBack={() => onNav('play')} title="🛒 Shop" right={<>🪙 {eco?.coins ?? '—'}</>} />
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
         <p className="text-xs text-slate-300 px-1">
-          Earn coins from the daily bonus, <button onClick={() => onNav('missions')} className="underline font-bold">missions</button> and Free Bingo wins. Coins never convert to ETB.
+          Earn coins from <button onClick={() => onNav('missions')} className="underline font-bold">missions</button>. Coins never convert to ETB.
         </p>
 
         <section>
@@ -112,6 +113,7 @@ export default function Shop({ onNav, haptic }) {
 
         {error && <p className="text-sm text-rose-400 text-center">{error}</p>}
 
+        </div>
         <BottomNav active={null} onNav={onNav} />
       </div>
     </main>

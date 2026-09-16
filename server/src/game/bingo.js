@@ -66,6 +66,23 @@ export function completedLines(marks) {
   return LINES.filter((line) => line.every((i) => marks[i]));
 }
 
+/** The four corner cells: a winning pattern in their own right, besides any full line. */
+export const CORNERS = Object.freeze([0, SIZE - 1, SIZE * (SIZE - 1), SIZE * SIZE - 1]);
+
+export function cornersComplete(marks) {
+  return CORNERS.every((i) => marks[i]);
+}
+
+/**
+ * The pattern that wins on this card under the line rules: the first complete row, column
+ * or diagonal once `linesToWin` of them are done, else the four corners, else null.
+ */
+export function winningPattern(marks, linesToWin = 1) {
+  const lines = completedLines(marks);
+  if (lines.length >= linesToWin) return lines[0];
+  return cornersComplete(marks) ? [...CORNERS] : null;
+}
+
 /** Shuffled draw order for the caller. */
 export function drawOrder() {
   return shuffle(Array.from({ length: MAX_NUMBER }, (_, i) => i + 1));

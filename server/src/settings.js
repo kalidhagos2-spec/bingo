@@ -19,12 +19,12 @@ export const SCHEMA = Object.freeze([
   { key: 'countdownMs', group: 'Pacing', label: 'Cartela pick time (ms)', min: 10_000, max: 300_000, step: 1000, scope: 'game' },
   { key: 'callIntervalMs', group: 'Pacing', label: 'Seconds between calls (ms)', min: 1000, max: 30_000, step: 500, scope: 'game' },
   { key: 'restartDelayMs', group: 'Pacing', label: 'Pause before registration re-opens (ms)', min: 3000, max: 60_000, step: 1000, scope: 'game' },
-  { key: 'telebirrAccount', group: 'House accounts', label: 'Telebirr number players transfer to', scope: 'account', method: 'telebirr', field: 'account' },
-  { key: 'telebirrName', group: 'House accounts', label: 'Telebirr account name', scope: 'account', method: 'telebirr', field: 'name' },
-  { key: 'cbebirrAccount', group: 'House accounts', label: 'CBE Birr number / account', scope: 'account', method: 'cbebirr', field: 'account' },
-  { key: 'cbebirrName', group: 'House accounts', label: 'CBE Birr account name', scope: 'account', method: 'cbebirr', field: 'name' },
-  { key: 'boaAccount', group: 'House accounts', label: 'Bank of Abyssinia account number', scope: 'account', method: 'boa', field: 'account' },
-  { key: 'boaName', group: 'House accounts', label: 'Bank of Abyssinia account name', scope: 'account', method: 'boa', field: 'name' },
+  { key: 'telebirrAccount', group: 'House accounts', label: 'Telebirr number(s) players transfer to — comma-separated, e.g. 0937766034,0960524040', scope: 'account', method: 'telebirr', field: 'account' },
+  { key: 'telebirrName', group: 'House accounts', label: 'Telebirr account holder name(s), same order — e.g. Aman,Kalid', scope: 'account', method: 'telebirr', field: 'name' },
+  { key: 'cbebirrAccount', group: 'House accounts', label: 'CBE Birr number(s) players transfer to (empty = not offered)', scope: 'account', method: 'cbebirr', field: 'account' },
+  { key: 'cbebirrName', group: 'House accounts', label: 'CBE Birr account holder name(s)', scope: 'account', method: 'cbebirr', field: 'name' },
+  { key: 'boaAccount', group: 'House accounts', label: 'Bank of Abyssinia account number(s) (empty = not offered)', scope: 'account', method: 'boa', field: 'account' },
+  { key: 'boaName', group: 'House accounts', label: 'Bank of Abyssinia account holder name(s)', scope: 'account', method: 'boa', field: 'name' },
 ]);
 
 const num = (v) => (typeof v === 'string' ? Number(v.trim()) : Number(v));
@@ -37,7 +37,11 @@ export function validate(patch, current) {
     const raw = patch[field.key];
     if (field.scope === 'account') {
       const text = String(raw ?? '').trim();
-      if (text.length > 60) throw new Error(`${field.label} must be at most 60 characters`);
+      if (text.length > 120) throw new Error(`${field.label} must be at most 120 characters`);
+      // A number typed into a name field is the classic mix-up: the deposit cards would then show the number twice.
+      const short = field.label.split(' — ')[0].split(' (')[0];
+      if (field.field === 'name' && text && /^[\d\s,+.-]+$/.test(text)) throw new Error(`${short}: enter the account holder's name (e.g. Aman,Kalid), not a number`);
+      if (field.field === 'account' && text && !text.split(',').every((a) => /^\+?\d{6,15}$/.test(a.trim()))) throw new Error(`${short}: enter phone or account numbers only, comma-separated`);
       next[field.key] = text;
       continue;
     }
@@ -108,7 +112,15 @@ export function createSettings({ config, store, manager = null }) {
     overrides: () => store.settingsOverrides(),
     async update(patch) {
       const next = validate(patch, snapshot(config));
-      await store.updateSettings(next);
+      // Only values that differ from the .env defaults are kept as overrides, so setting a
+      // field back to its default forgets the override instead of pinning it.
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const kept = { ...store.settingsOverrides() };
+      for (const [key, value] of Object.entries(next)) {
+        if (same(value, defaults[key])) delete kept[key];
+        else kept[key] = value;
+      }
+      await store.setSettings(kept);
       apply(next);
       return snapshot(config);
     },
