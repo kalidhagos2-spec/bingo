@@ -52,12 +52,9 @@ export function signInitData(fields, botToken) {
 
 const DEV_USER = { id: 1, first_name: 'Dev', last_name: 'User', username: 'dev' };
 
-/**
- * Express middleware: `Authorization: tma <initData>` (Telegram) or `Bearer <token>`
- * (email login session, resolved by `sessions(token)`) sets req.user.
- */
-export function telegramAuth({ botToken, devAllowAnon, sessions = () => null, suspension = () => null }) {
-  return async (req, res, next) => {
+/** Express middleware: `Authorization: tma <initData>` (Telegram Mini App) sets req.user. */
+export function telegramAuth({ botToken, devAllowAnon, suspension = () => null }) {
+  return (req, res, next) => {
     const header = req.get('authorization') ?? '';
     const [scheme, ...rest] = header.split(' ');
     const initData = scheme?.toLowerCase() === 'tma' ? rest.join(' ') : '';
@@ -72,11 +69,6 @@ export function telegramAuth({ botToken, devAllowAnon, sessions = () => null, su
 
     const user = verifyInitData(initData, botToken);
     if (user) return admit(user);
-    if (scheme?.toLowerCase() === 'bearer') {
-      const sessionUser = await sessions(rest[0]);
-      if (sessionUser) return admit(sessionUser);
-      return res.status(401).json({ error: 'Session expired. Please log in again.' });
-    }
     if (devAllowAnon && !initData) return admit(DEV_USER);
     res.status(401).json({ error: 'Invalid or missing Telegram initData' });
   };

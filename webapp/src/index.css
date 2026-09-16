@@ -43,12 +43,28 @@ html, body, #root {
   height: 100%;
 }
 
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
-  background: #0a1a5c;
+  background:
+    radial-gradient(circle at top, rgba(34, 211, 238, 0.18), transparent 28%),
+    radial-gradient(circle at bottom, rgba(168, 85, 247, 0.14), transparent 34%),
+    linear-gradient(180deg, #071438 0%, #0a1a5c 35%, #0d1d62 100%);
   color: var(--tg-theme-text-color, #f8fafc);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
   user-select: none;
+}
+
+button, input {
+  font: inherit;
+}
+
+body, button, input {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }

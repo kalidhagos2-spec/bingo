@@ -73,21 +73,30 @@ test('chapa webhook rejects a bad signature when a webhook secret is set', async
   assert.equal(await p.handleWebhook(req), null);
 });
 
-test('registry falls back to sandbox when no gateway is configured', () => {
-  const cfg = { forceMock: false, telebirr: {}, chapa: {} };
+test('registry offers no online checkout when no gateway is configured', () => {
+  const cfg = { telebirr: {}, chapa: {} };
   const providers = buildProviders(cfg, { paymentUrl });
-  assert.deepEqual([...providers.keys()], ['telebirr', 'cbebirr', 'boa']);
-  assert.ok([...providers.values()].every((p) => p.sandbox));
+  assert.equal(providers.size, 0);
 });
 
 test('registry uses direct Telebirr and Chapa for banks when configured', () => {
   const cfg = {
-    forceMock: false,
     telebirr: { appId: 'a', appKey: 'k', publicKey: bareKey, shortCode: '1', receiveName: 'x', baseUrl: 'https://t' },
     chapa: { secretKey: 'sk', baseUrl: 'https://c' },
   };
   const providers = buildProviders(cfg, { paymentUrl });
-  assert.equal(providers.get('telebirr').sandbox, undefined);
-  assert.equal(providers.get('cbebirr').sandbox, undefined);
+  assert.deepEqual([...providers.keys()], ['telebirr', 'cbebirr', 'boa']);
+  assert.equal(providers.get('telebirr').webhookBody, 'text'); // direct Telebirr Web API
+  assert.equal(providers.get('cbebirr').webhookBody, 'json'); // Chapa
   assert.equal(providers.get('boa').label, 'Bank of Abyssinia');
+});
+
+test('registry offers only the rails whose gateway is configured', () => {
+  const providers = buildProviders({ telebirr: {}, chapa: { secretKey: 'sk', baseUrl: 'https://c' } }, { paymentUrl });
+  assert.deepEqual([...providers.keys()], ['telebirr', 'cbebirr', 'boa']); // all three via Chapa
+  const direct = buildProviders(
+    { telebirr: { appId: 'a', appKey: 'k', publicKey: bareKey, shortCode: '1', receiveName: 'x', baseUrl: 'https://t' }, chapa: {} },
+    { paymentUrl },
+  );
+  assert.deepEqual([...direct.keys()], ['telebirr']); // banks need Chapa
 });

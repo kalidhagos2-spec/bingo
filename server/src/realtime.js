@@ -1,6 +1,5 @@
 import { Server } from 'socket.io';
 import { verifyInitData, suspendedMessage } from './auth.js';
-import { sessionUser } from './emailAuth.js';
 import { RoomManager } from './game/manager.js';
 
 /**
@@ -51,15 +50,10 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
     return next();
   };
 
-  io.use(async (socket, next) => {
-    const { initData, token, devId } = socket.handshake.auth ?? {};
+  io.use((socket, next) => {
+    const { initData, devId } = socket.handshake.auth ?? {};
     const user = verifyInitData(initData, botToken);
     if (user) return admit(socket, user, next);
-    if (token) {
-      const emailUser = store ? await sessionUser(store, token) : null;
-      if (!emailUser) return next(new Error('unauthorized'));
-      return admit(socket, emailUser, next);
-    }
     if (devAllowAnon && !initData) {
       const id = Number.parseInt(devId, 10) || 1;
       return admit(socket, { id, first_name: `Guest ${id}` }, next);
@@ -154,11 +148,20 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
         return room;
       });
     });
+    socket.on('game:release', (payload, cb) => {
+      if (typeof payload === 'function') [payload, cb] = [{}, payload];
+      ack(cb, () => {
+        const room = inRoom();
+        room.release(user.id, Number(payload?.cartela));
+        return room;
+      });
+    });
     socket.on('game:mark', (payload, cb) => {
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
       try {
         const room = inRoom();
-        const result = room.mark(user.id, Number(payload?.number));
+        const cartela = payload?.cartela == null ? null : Number(payload.cartela);
+        const result = room.mark(user.id, Number(payload?.number), cartela);
         store?.trackMission(user.id, 'marks', 1);
         room.broadcast();
         safeCb(cb, { ok: true, ...result });
@@ -169,7 +172,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
     socket.on('game:claim', (payload, cb) => {
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
       try {
-        const result = inRoom().claim(user.id);
+        const result = inRoom().claim(user.id, payload?.cartela == null ? null : Number(payload.cartela));
         safeCb(cb, { ok: true, ...result });
       } catch (err) {
         safeCb(cb, { ok: false, error: err.message });

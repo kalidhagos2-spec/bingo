@@ -13,9 +13,14 @@ const digits = (s) => String(s ?? '').replace(/\D/g, '');
 export function receiptConfirms(html, { txId, amount, houseAccount }) {
   const text = String(html ?? '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
   if (!text.toUpperCase().includes(String(txId).toUpperCase())) return { ok: false, reason: 'transaction id not on receipt' };
+  // Receipts print whole amounts without decimals ("50 Birr") and others as "50.50 Birr".
+  // Only numbers labelled with a currency count, so digits in dates, times and phone
+  // numbers can never pass as the amount; a bare "100.00" anywhere is accepted too.
   const wanted = Number(amount).toFixed(2);
-  const amounts = [...text.matchAll(/(\d[\d,]*\.\d{2})/g)].map((m) => m[1].replace(/,/g, ''));
-  if (!amounts.includes(wanted)) return { ok: false, reason: `amount ${wanted} not on receipt` };
+  const toFixed = (whole, frac) => Number(`${whole.replace(/,/g, '')}${frac ?? ''}`).toFixed(2);
+  const labelled = [...text.matchAll(/(?<![\d.:])(\d{1,3}(?:,\d{3})*|\d+)(\.\d{1,2})?\s*(?:birr|etb|ብር)\b/gi)].map((m) => toFixed(m[1], m[2]));
+  const decimals = [...text.matchAll(/(?<![\d.:])(\d{1,3}(?:,\d{3})*|\d+)(\.\d{2})(?![\d.])/g)].map((m) => toFixed(m[1], m[2]));
+  if (![...labelled, ...decimals].includes(wanted)) return { ok: false, reason: `amount ${wanted} not on receipt` };
   // Receipts print numbers in international form (2519…); house accounts are usually local (09…): compare without the leading zero.
   const account = digits(houseAccount).replace(/^0+/, '');
   const last4 = account.slice(-4);

@@ -1,8 +1,8 @@
 import { Router, json, text, urlencoded } from 'express';
 import { STATUS } from '../store.js';
-import { describeProviders } from '../payments/registry.js';
-import { mockCheckoutPage } from '../payments/mock.js';
+import { describeProviders, METHODS } from '../payments/registry.js';
 import { verifyTelebirrReceipt, TELEBIRR_RECEIPT_URL } from '../receipts.js';
+import { normalizePhone } from './profile.js';
 
 const returnPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
@@ -14,13 +14,26 @@ const publicTx = ({ ref, type = 'topup', method, account, amount, fee, payout, c
   ref, type, method, account, amount, fee, payout, credited, currency, status, reason, note, providerRef, verified, createdAt, updatedAt,
 });
 
-/** House accounts that have a number configured, in a shape the wallet screen can render with copy buttons. */
-const houseAccounts = (config, providers) =>
-  [...providers.values()]
-    .map((p) => ({ method: p.id, label: p.label, ...(config.houseAccounts?.[p.id] ?? {}) }))
-    .filter((a) => a.account);
+const list = (s) => String(s ?? '').split(',').map((x) => x.trim());
 
-export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
+/**
+ * House accounts players transfer to, one entry per account. `HOUSE_<METHOD>_ACCOUNT` and
+ * `HOUSE_<METHOD>_NAME` may hold several comma-separated values (paired by position), so
+ * a rail can show more than one receiving number, e.g. two Telebirr wallets.
+ */
+const houseAccounts = (config) =>
+  METHODS.flatMap((m) => {
+    const cfg = config.houseAccounts?.[m.id] ?? {};
+    const names = list(cfg.name);
+    return list(cfg.account)
+      .filter(Boolean)
+      .map((account, i) => ({ method: m.id, label: m.label, account, name: names[i] ?? names[0] ?? '' }));
+  });
+
+const isMethod = (id) => METHODS.some((m) => m.id === id);
+
+/** `notifyBalance(userId, balance)` pushes a live wallet update to a connected player (optional). */
+export function paymentsRouter({ config, store, providers, auth, notifyBalance = () => {} }) {
   const router = Router();
   const jsonWithRaw = json({ verify: (req, _res, buf) => (req.rawBody = buf.toString('utf8')) });
 
@@ -65,23 +78,6 @@ export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
     res.send(returnPage(...copy));
   });
 
-  const hasSandbox = [...providers.values()].some((p) => p.sandbox);
-  if (hasSandbox) {
-    router.get('/mock/checkout', async (req, res) => {
-      const tx = await store.findByRef(String(req.query.ref ?? ''));
-      if (!tx || !providers.get(tx.method)?.sandbox) return res.status(404).send('Unknown sandbox payment');
-      res.send(mockCheckoutPage(tx, { paymentUrl }));
-    });
-    router.post('/mock/complete', urlencoded({ extended: false }), async (req, res) => {
-      const { ref, outcome } = req.body ?? {};
-      const tx = await store.findByRef(String(ref ?? ''));
-      const provider = tx && providers.get(tx.method);
-      if (!provider?.sandbox) return res.status(404).send('Unknown sandbox payment');
-      await applyResult(provider, await provider.handleWebhook({ body: { ref, outcome } }));
-      res.redirect(paymentUrl(`/return?ref=${tx.ref}`));
-    });
-  }
-
   // ---------- authenticated Mini App API ----------
 
   router.use(auth);
@@ -93,8 +89,12 @@ export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
       max: config.maxTopup,
       depositFeePercent: config.depositFeePercent,
       withdraw: { min: config.minWithdraw, max: config.maxWithdraw, feePercent: config.withdrawFeePercent },
+      p2p: { min: config.minTransfer },
+      // Online checkout is offered only for methods with a configured gateway; cash-outs
+      // and transfer deposits work on every rail.
       methods: describeProviders(providers),
-      transfer: { accounts: houseAccounts(config, providers), receiptUrl: TELEBIRR_RECEIPT_URL },
+      payoutMethods: METHODS.map(({ id, label, description }) => ({ id, label, description })),
+      transfer: { accounts: houseAccounts(config), receiptUrl: TELEBIRR_RECEIPT_URL },
     });
   });
 
@@ -129,9 +129,11 @@ export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
   // ---------- deposits by bank transfer + pasted receipt id ----------
 
   router.post('/deposit', json(), async (req, res) => {
-    const { method, amount, txId } = req.body ?? {};
+    const { method, amount, txId, account } = req.body ?? {};
     const value = Math.round(Number(amount) * 100) / 100;
-    const house = houseAccounts(config, providers).find((a) => a.method === method);
+    // `account` picks which of the rail's house accounts the player paid into (default: the first).
+    const rail = houseAccounts(config).filter((a) => a.method === method);
+    const house = (account && rail.find((a) => a.account === String(account).trim())) || rail[0];
     if (!house) return res.status(400).json({ error: 'Transfers are not accepted through this method' });
     if (!Number.isFinite(value) || value < config.minTopup || value > config.maxTopup) {
       return res.status(400).json({ error: `Amount must be between ${config.minTopup} and ${config.maxTopup} ${config.currency}` });
@@ -144,12 +146,48 @@ export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
     }
     // Telebirr receipts are public: confirm automatically when the receipt matches, else leave it for the operator.
     let check = null;
-    if (method === 'telebirr') {
+    if (config.autoApproveDeposits) {
+      // TEST MODE: every receipt is taken at face value.
+      tx = await store.resolveDeposit(tx.ref, { approved: true, verified: 'auto-test' });
+      check = { ok: true };
+    } else if (method === 'telebirr') {
       check = await verifyTelebirrReceipt({ txId: tx.providerRef, amount: value, houseAccount: house.account });
       if (check.ok) tx = await store.resolveDeposit(tx.ref, { approved: true, verified: 'auto' });
       else await store.update(tx.ref, { autoCheck: check.reason });
     }
     res.status(201).json({ ...publicTx(tx), autoVerified: Boolean(check?.ok), balance: store.balance(req.user.id) });
+  });
+
+  // ---------- player-to-player transfers (by phone number) ----------
+
+  /** Who a phone number belongs to, so the sender can confirm before sending. */
+  router.get('/recipient', (req, res) => {
+    const phone = normalizePhone(req.query.phone);
+    if (!phone) return res.status(400).json({ error: 'Enter a valid phone number, e.g. 0900000000' });
+    const player = store.playerByPhone(phone);
+    if (!player) return res.status(404).json({ error: 'No player with that phone number has signed up yet' });
+    if (player.id === req.user.id) return res.status(400).json({ error: 'That is your own number' });
+    res.json({ id: player.id, name: player.name ?? player.firstName ?? `Player ${player.id}`, phone });
+  });
+
+  router.post('/transfer', json(), (req, res) => {
+    const phone = normalizePhone(req.body?.phone);
+    const value = Math.round(Number(req.body?.amount) * 100) / 100;
+    if (!phone) return res.status(400).json({ error: 'Enter a valid phone number, e.g. 0900000000' });
+    if (!Number.isFinite(value) || value < config.minTransfer) return res.status(400).json({ error: `Minimum transfer is ${config.minTransfer} ${config.currency}` });
+    const player = store.playerByPhone(phone);
+    if (!player) return res.status(404).json({ error: 'No player with that phone number has signed up yet' });
+    if (player.id === req.user.id) return res.status(400).json({ error: 'You cannot send money to yourself' });
+    const senderName = store.profile(req.user.id)?.name ?? req.user.first_name ?? `Player ${req.user.id}`;
+    const recipientName = player.name ?? player.firstName ?? `Player ${player.id}`;
+    try {
+      const result = store.transfer({ fromId: req.user.id, toId: player.id, amount: value, note: `Transfer ${senderName} → ${recipientName} (${phone})` });
+      notifyBalance(player.id, result.recipientBalance);
+      notifyBalance(req.user.id, result.senderBalance);
+      res.status(201).json({ ref: result.ref, amount: value, currency: config.currency, to: { id: player.id, name: recipientName, phone }, balance: result.senderBalance });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // ---------- cash-outs ----------
@@ -158,7 +196,7 @@ export function paymentsRouter({ config, store, providers, auth, paymentUrl }) {
     const { method, amount } = req.body ?? {};
     const account = String(req.body?.account ?? '').trim();
     const value = Math.round(Number(amount) * 100) / 100;
-    if (!providers.has(method)) return res.status(400).json({ error: 'Unknown payout method' });
+    if (!isMethod(method)) return res.status(400).json({ error: 'Unknown payout method' });
     if (!Number.isFinite(value) || value < config.minWithdraw || value > config.maxWithdraw) {
       return res.status(400).json({ error: `Amount must be between ${config.minWithdraw} and ${config.maxWithdraw} ${config.currency}` });
     }

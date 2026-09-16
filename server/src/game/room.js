@@ -14,10 +14,12 @@ export const DEFAULT_RULES = Object.freeze({
   fullCard: true, // round is won by claiming BINGO with every number on the card marked
   linesToWin: 1, // used only when fullCard is false
   callIntervalMs: 4000,
-  countdownMs: 40000, // time players get to pick a cartela
+  countdownMs: 40000, // time players get to pick cartelas
   restartDelayMs: 8000,
   cartelaCount: CARTELA_COUNT,
-  houseCutPercent: 2, // share of every player's stake kept by the house; the rest is the prize pool
+  maxCartelas: 4, // cartelas one player may hold in a round; each one pays the stake
+  houseCutPercent: 20, // share of every stake kept by the house; the rest is the prize pool
+  maxPrize: 3000, // the prize pool never exceeds this, whatever the stakes add up to
 });
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -28,9 +30,9 @@ export function makeCode(length = 4) {
 
 const money = (n) => Math.round(n * 100) / 100;
 
-/** Prize pool for `players` paying `stake` after the house cut. */
-export function prizePool(stake, players, houseCutPercent) {
-  return money((stake * players * (100 - houseCutPercent)) / 100);
+/** Prize pool for `tickets` cartelas paying `stake` each, after the house cut, capped at `maxPrize`. */
+export function prizePool(stake, tickets, houseCutPercent, maxPrize = Infinity) {
+  return Math.min(money((stake * tickets * (100 - houseCutPercent)) / 100), maxPrize);
 }
 
 /**
@@ -40,10 +42,11 @@ export function prizePool(stake, players, houseCutPercent) {
  * The house hosts every table: rounds start on the registration countdown and numbers are
  * called by the server; no player controls the game.
  *
- * Money: `stake` is charged when a player picks their first cartela of the round
- * (`wallet.charge`), refunded if they leave before the round starts, and the prize pool
- * (stakes minus the house cut) goes to the winner via `wallet.credit`. The house cut of a
- * played round is reported to `stats.recordRound` as `houseTake`.
+ * Cartelas: a player holds up to `maxCartelas` numbered cards per round (`player.cards`),
+ * each a `{ cartela, cells, marks }`. Every cartela pays the stake when picked
+ * (`wallet.charge`), is refunded when released or on leaving before the round starts, and
+ * the prize pool (all stakes minus the house cut) goes to the winner via `wallet.credit`.
+ * The house cut of a played round is reported to `stats.recordRound` as `houseTake`.
  */
 export class Room {
   constructor({ code, stake = 0, isPrivate = false, rules = {}, emit, emitTo, wallet = null, stats = null, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
@@ -62,7 +65,7 @@ export class Room {
 
     this.phase = PHASE.WAITING;
     this.round = 0;
-    this.players = new Map(); // userId -> { id, name, cartela, card, marks, joinedAt }
+    this.players = new Map(); // userId -> { id, name, cards: [{ cartela, cells, marks }], joinedAt }
     this.called = [];
     this.drawPool = [];
     this.pool = 0; // prize pool of the round in progress
@@ -78,10 +81,17 @@ export class Room {
     return this.players.size;
   }
 
-  /** Players who hold a cartela (and have paid the stake) for the coming round. */
+  /** Players holding at least one cartela (and having paid) for the coming round. */
   get ready() {
     let n = 0;
-    for (const p of this.players.values()) if (p.cartela) n++;
+    for (const p of this.players.values()) if (p.cards.length) n++;
+    return n;
+  }
+
+  /** Cartelas in play: every one pays the stake. */
+  get tickets() {
+    let n = 0;
+    for (const p of this.players.values()) n += p.cards.length;
     return n;
   }
 
@@ -96,7 +106,7 @@ export class Room {
   join(user) {
     if (this.players.has(user.id)) return this.players.get(user.id);
     if (!this.canJoin()) throw new Error(this.phase === PHASE.PLAYING ? 'Game already in progress' : 'Room is full');
-    const player = { id: user.id, name: displayName(user), cartela: null, card: null, marks: null, joinedAt: this.now() };
+    const player = { id: user.id, name: displayName(user), cards: [], joinedAt: this.now() };
     this.players.set(user.id, player);
     this.broadcast();
     return player;
@@ -105,7 +115,7 @@ export class Room {
   leave(userId) {
     const player = this.players.get(userId);
     if (!player) return;
-    if (this.open && player.cartela) this.refund(player);
+    if (this.open) for (const c of player.cards) this.refund(player, c.cartela);
     this.players.delete(userId);
     if (this.size === 0) {
       this.clearTimer();
@@ -121,32 +131,32 @@ export class Room {
 
   // ---------- money ----------
 
-  poolFor(participants) {
-    return prizePool(this.stake, participants, this.rules.houseCutPercent);
+  poolFor(tickets) {
+    return prizePool(this.stake, tickets, this.rules.houseCutPercent, this.rules.maxPrize);
   }
 
-  charge(player) {
+  charge(player, cartela) {
     if (this.stake === 0) return;
-    if (!this.wallet?.charge(player.id, this.stake, `Stake for room ${this.code}`)) {
+    if (!this.wallet?.charge(player.id, this.stake, `Stake for cartela ${cartela} in room ${this.code}`)) {
       throw new Error(`Insufficient balance: this room costs ${this.stake} per cartela`);
     }
   }
 
-  refund(player) {
+  refund(player, cartela) {
     if (this.stake === 0) return;
-    this.wallet?.credit(player.id, this.stake, `Refund for room ${this.code}`);
+    this.wallet?.credit(player.id, this.stake, `Refund for cartela ${cartela} in room ${this.code}`);
   }
 
   // ---------- cartelas ----------
 
   ownerOf(cartela) {
-    for (const p of this.players.values()) if (p.cartela === cartela) return p;
+    for (const p of this.players.values()) if (p.cards.some((c) => c.cartela === cartela)) return p;
     return null;
   }
 
   /**
-   * Pick (or switch to) a numbered cartela while registration is open. The first pick
-   * of a round pays the stake; switching is free. The card is dealt at once as a preview.
+   * Pick a numbered cartela while registration is open. Each pick pays the stake; a player
+   * may hold up to `maxCartelas`. The card is dealt at once as a preview.
    */
   choose(userId, cartela) {
     if (!this.open) throw new Error('Wait for the next round to pick a cartela');
@@ -157,17 +167,40 @@ export class Room {
     }
     const owner = this.ownerOf(cartela);
     if (owner && owner.id !== userId) throw new Error(`Cartela ${cartela} is already taken by ${owner.name}`);
-    if (!player.cartela) this.charge(player);
+    if (owner) return player; // already yours
+    if (player.cards.length >= this.rules.maxCartelas) throw new Error(`You can hold up to ${this.rules.maxCartelas} cartelas`);
+    this.charge(player, cartela);
     this.deal(player, cartela);
     this.maybeCountdown();
     this.broadcast();
     return player;
   }
 
+  /** Give a cartela back while registration is open; its stake is refunded. */
+  release(userId, cartela) {
+    if (!this.open) throw new Error('Wait for the next round to change cartelas');
+    const player = this.players.get(userId);
+    if (!player) throw new Error('You are not in this room');
+    const i = player.cards.findIndex((c) => c.cartela === cartela);
+    if (i < 0) throw new Error(`You do not hold cartela ${cartela}`);
+    player.cards.splice(i, 1);
+    this.refund(player, cartela);
+    if (this.phase === PHASE.COUNTDOWN && this.ready < this.rules.minPlayers) {
+      this.clearTimer();
+      this.phase = PHASE.WAITING;
+      this.startsAt = null;
+    }
+    this.emitTo(player.id, 'game:card', this.cardFor(player.id));
+    this.broadcast();
+    return player;
+  }
+
   deal(player, cartela) {
-    player.cartela = cartela;
-    player.card = cardForCartela(cartela);
-    player.marks = initialMarks();
+    const existing = player.cards.find((c) => c.cartela === cartela);
+    const card = { cartela, cells: cardForCartela(cartela), marks: initialMarks() };
+    if (existing) Object.assign(existing, card);
+    else player.cards.push(card);
+    player.cards.sort((a, b) => a.cartela - b.cartela);
     this.emitTo(player.id, 'game:card', this.cardFor(player.id));
   }
 
@@ -192,10 +225,10 @@ export class Room {
     this.winner = null;
     this.startsAt = null;
     this.startedAt = this.now();
-    this.pool = this.poolFor(this.ready);
+    this.pool = this.poolFor(this.tickets);
     for (const p of this.players.values()) {
-      if (p.cartela) this.deal(p, p.cartela); // fresh marks
-      else p.card = p.marks = null; // spectator until the next round
+      for (const c of p.cards) c.marks = initialMarks(); // fresh marks
+      if (p.cards.length) this.emitTo(p.id, 'game:card', this.cardFor(p.id));
     }
     this.broadcast();
     this.callNext();
@@ -216,56 +249,77 @@ export class Room {
   playerInRound(userId) {
     if (this.phase !== PHASE.PLAYING) throw new Error('No game running');
     const player = this.players.get(userId);
-    if (!player?.card) throw new Error('You are not in this round');
+    if (!player?.cards.length) throw new Error('You are not in this round');
     return player;
   }
 
-  /** Marks a called number on the player's card. Winning still requires `claim()`. */
-  mark(userId, number) {
+  /**
+   * Marks a called number on the player's cartela (`cartela` given) or on every cartela of
+   * theirs that carries it. Winning still requires `claim()`.
+   */
+  mark(userId, number, cartela = null) {
     const player = this.playerInRound(userId);
     if (!this.called.includes(number)) throw new Error('That number has not been called');
-    const cell = player.card.find((c) => c.value === number);
-    if (!cell) throw new Error('That number is not on your card');
-    player.marks[cell.index] = true;
+    const targets = cartela === null ? player.cards : player.cards.filter((c) => c.cartela === cartela);
+    if (cartela !== null && targets.length === 0) throw new Error(`You do not hold cartela ${cartela}`);
+    let hit = false;
+    for (const card of targets) {
+      const cell = card.cells.find((c) => c.value === number);
+      if (!cell) continue;
+      card.marks[cell.index] = true;
+      hit = true;
+    }
+    if (!hit) throw new Error(cartela === null ? 'That number is not on your cards' : `That number is not on cartela ${cartela}`);
     return this.progress(player);
   }
 
-  progress(player) {
-    const lines = completedLines(player.marks);
-    const full = player.marks.every(Boolean);
+  cardProgress(card) {
+    const lines = completedLines(card.marks);
+    const full = card.marks.every(Boolean);
     const won = this.rules.fullCard ? full : lines.length >= this.rules.linesToWin;
-    return { marks: player.marks, lines: lines.length, marked: player.marks.filter(Boolean).length - 1, full, canClaim: won };
+    return { cartela: card.cartela, marks: card.marks, lines: lines.length, marked: card.marks.filter(Boolean).length - 1, full, canClaim: won };
   }
 
-  /** The BINGO! button: ends the round if the player's card really qualifies. */
-  claim(userId) {
+  /** Progress of every cartela the player holds, plus the best one for the BINGO! button. */
+  progress(player) {
+    const cards = player.cards.map((c) => this.cardProgress(c));
+    const best = cards.find((c) => c.canClaim) ?? cards.reduce((a, b) => (b.marked > a.marked ? b : a), cards[0]);
+    return { cards, canClaim: Boolean(best?.canClaim), ...(best ?? {}) };
+  }
+
+  /** The BINGO! button: ends the round if one of the player's cartelas really qualifies. */
+  claim(userId, cartela = null) {
     const player = this.playerInRound(userId);
     const p = this.progress(player);
-    if (!p.canClaim) {
-      throw new Error(this.rules.fullCard ? `Not yet: ${p.marked}/${player.marks.length - 1} marked` : `Not yet: ${p.lines}/${this.rules.linesToWin} lines`);
+    const chosen = cartela === null ? p.cards.find((c) => c.canClaim) : p.cards.find((c) => c.cartela === cartela);
+    if (cartela !== null && !chosen) throw new Error(`You do not hold cartela ${cartela}`);
+    if (!chosen?.canClaim) {
+      const best = chosen ?? p;
+      throw new Error(this.rules.fullCard ? `Not yet: ${best.marked}/${best.marks.length - 1} marked` : `Not yet: ${best.lines}/${this.rules.linesToWin} lines`);
     }
-    this.finish(player, completedLines(player.marks)[0] ?? null, p.full);
+    const card = player.cards.find((c) => c.cartela === chosen.cartela);
+    this.finish(player, completedLines(card.marks)[0] ?? null, chosen.full, card);
     return p;
   }
 
-  finish(player, line = null, full = false) {
+  finish(player, line = null, full = false, card = player?.cards[0] ?? null) {
     this.clearTimer();
     this.phase = PHASE.FINISHED;
     if (player) {
-      this.winner = { id: player.id, name: player.name, cartela: player.cartela, line, full, prize: this.pool, card: player.card, marks: player.marks };
+      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks };
       if (this.pool > 0) this.wallet?.credit(player.id, this.pool, `Prize for room ${this.code}`);
     } else {
       this.winner = null;
-      for (const p of this.players.values()) if (p.card) this.refund(p); // nobody won: stakes go back
+      for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela); // nobody won: stakes go back
     }
-    const seated = [...this.players.values()].filter((p) => p.card);
+    const seated = [...this.players.values()].filter((p) => p.cards.length);
     const participants = seated.map((p) => p.id);
-    const stakes = money(this.stake * participants.length);
+    const stakes = money(this.stake * this.tickets);
     this.stats?.recordRound({
       participants,
-      players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cartela, marked: p.marks.filter(Boolean).length - 1 })),
+      players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p) })),
       winnerId: player?.id ?? null,
-      winner: player ? { id: player.id, name: player.name, cartela: player.cartela, full, line } : null,
+      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line } : null,
       prize: player ? this.pool : 0,
       stake: this.stake,
       stakes: player ? stakes : 0, // no winner: everything was refunded
@@ -286,7 +340,7 @@ export class Room {
     this.phase = PHASE.WAITING;
     this.winner = null;
     this.pool = 0;
-    for (const p of this.players.values()) p.cartela = p.card = p.marks = null;
+    for (const p of this.players.values()) p.cards = [];
     this.broadcast();
   }
 
@@ -304,13 +358,15 @@ export class Room {
 
   destroy() {
     this.clearTimer();
-    if (this.open) for (const p of this.players.values()) if (p.cartela) this.refund(p);
+    if (this.open) for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela);
     this.players.clear();
   }
 
+  /** Every cartela the player holds, or null when they hold none. */
   cardFor(userId) {
     const p = this.players.get(userId);
-    return p?.card ? { cells: p.card, marks: p.marks, round: this.round, cartela: p.cartela } : null;
+    if (!p?.cards.length) return null;
+    return { cards: p.cards.map((c) => ({ cartela: c.cartela, cells: c.cells, marks: c.marks })), round: this.round };
   }
 
   /** Lobby summary. */
@@ -322,8 +378,9 @@ export class Room {
       phase: this.phase,
       players: this.size,
       ready: this.ready,
+      tickets: this.tickets,
       startsAt: this.startsAt,
-      pool: this.phase === PHASE.PLAYING || this.phase === PHASE.FINISHED ? this.pool : this.poolFor(this.ready),
+      pool: this.phase === PHASE.PLAYING || this.phase === PHASE.FINISHED ? this.pool : this.poolFor(this.tickets),
       callIndex: this.called.length,
     };
   }
@@ -346,9 +403,10 @@ export class Room {
       players: [...this.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
-        cartela: p.cartela,
-        playing: Boolean(p.card) && this.phase !== PHASE.WAITING && this.phase !== PHASE.COUNTDOWN,
-        marked: p.marks ? p.marks.filter(Boolean).length - 1 : 0,
+        cartelas: p.cards.map((c) => c.cartela),
+        cartela: p.cards[0]?.cartela ?? null,
+        playing: p.cards.length > 0 && this.phase !== PHASE.WAITING && this.phase !== PHASE.COUNTDOWN,
+        marked: markedCount(p),
       })),
     };
   }
@@ -356,6 +414,11 @@ export class Room {
   broadcast() {
     this.emit('room:state', this.publicState());
   }
+}
+
+/** Numbers marked across all of a player's cartelas (the free centre excluded). */
+function markedCount(p) {
+  return p.cards.reduce((n, c) => n + c.marks.filter(Boolean).length - 1, 0);
 }
 
 function displayName(user) {

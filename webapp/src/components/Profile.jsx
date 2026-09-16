@@ -5,11 +5,10 @@ import { ScreenHeader, BottomNav } from './Nav.jsx';
 const etb = (n) => `${Number(n ?? 0).toFixed(n % 1 ? 2 : 0)} ETB`;
 
 /** Player profile: the fields collected by the bot at sign-up, editable here. */
-export default function Profile({ user, onNav, onLogout, haptic }) {
+export default function Profile({ user, onNav, haptic }) {
   const [profile, setProfile] = useState(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -22,7 +21,6 @@ export default function Profile({ user, onNav, onLogout, haptic }) {
         setProfile(p);
         setName(p.name ?? '');
         setPhone(p.phone ?? '');
-        setEmail(p.email ?? '');
       })
       .catch((e) => alive && setError(e.message));
     return () => {
@@ -36,11 +34,10 @@ export default function Profile({ user, onNav, onLogout, haptic }) {
     setSaved(false);
     setBusy(true);
     try {
-      const p = await api('/profile', { method: 'PUT', body: { name, phone, email } });
+      const p = await api('/profile', { method: 'PUT', body: { name, phone } });
       setProfile(p);
       setName(p.name ?? '');
       setPhone(p.phone ?? ''); // show the normalised values the server stored
-      setEmail(p.email ?? '');
       setSaved(true);
       haptic?.('success');
     } catch (err) {
@@ -78,7 +75,7 @@ export default function Profile({ user, onNav, onLogout, haptic }) {
 
         {profile && !profile.complete && (
           <p className="rounded-2xl bg-amber-400/15 border border-amber-400/50 px-4 py-3 text-sm">
-            <span className="font-black text-amber-300">Finish your sign-up.</span> Add your display name, phone number and email below, or send <span className="font-bold">/start</span> to the bot.
+            <span className="font-black text-amber-300">Finish your sign-up.</span> Add your display name and phone number below, or send <span className="font-bold">/start</span> to the bot.
           </p>
         )}
 
@@ -110,16 +107,6 @@ export default function Profile({ user, onNav, onLogout, haptic }) {
               className="rounded-xl bg-ink-900 border border-ink-600 px-3 py-2.5 text-base font-bold text-slate-100 outline-none focus:border-aqua-400"
             />
           </label>
-          <label className="flex flex-col gap-1 text-xs text-slate-300">
-            Email (used to log in outside Telegram)
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="rounded-xl bg-ink-900 border border-ink-600 px-3 py-2.5 text-base font-bold text-slate-100 outline-none focus:border-aqua-400"
-            />
-          </label>
           <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-400">
             <dt>Telegram</dt>
             <dd className="text-right text-slate-200">{profile?.firstName ?? user?.first_name ?? '—'}</dd>
@@ -132,12 +119,6 @@ export default function Profile({ user, onNav, onLogout, haptic }) {
             {busy ? 'Saving…' : 'Save profile'}
           </button>
         </form>
-
-        {onLogout && (
-          <button onClick={onLogout} className="py-2 text-sm text-rose-300">
-            Log out
-          </button>
-        )}
 
         <BottomNav active="profile" onNav={onNav} badges={{ profile: profile && !profile.complete }} />
       </div>

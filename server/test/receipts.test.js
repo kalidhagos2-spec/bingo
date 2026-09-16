@@ -19,6 +19,22 @@ test('a receipt confirms only when id, amount and house number all appear', () =
   assert.equal(receiptConfirms('', { txId: 'AB12CD34EF', amount: 100, houseAccount: house }).ok, false);
 });
 
+test('whole-number amounts count, but digits from dates, times or bigger numbers do not', () => {
+  const house = '0937766034';
+  // Real receipt shape: "50 Birr" (no decimals), fee and total, receiver masked, timestamp with a 20 in it.
+  const real = `<p>Transaction Number: DIG9RR30GV</p><p>Paid Amount: 50 Birr</p><p>Service fee: 0.87 Birr</p>
+    <p>Total: 51 Birr</p><p>Credited Party: amanuel Hailu 2519****6034</p><p>Date: 16-09-2026 12:45:20</p>`;
+  const check = (amount) => receiptConfirms(real, { txId: 'DIG9RR30GV', amount, houseAccount: house });
+  assert.deepEqual(check(50), { ok: true });
+  assert.deepEqual(check(51), { ok: true }); // the total is also a labelled amount
+  assert.match(check(45).reason, /amount 45.00/); // "12:45:20" is a time, not money
+  assert.match(check(20).reason, /amount 20.00/);
+  assert.match(check(2026).reason, /amount 2026.00/);
+  assert.match(check(5).reason, /amount 5.00/); // "50" must not match 5
+  assert.deepEqual(receiptConfirms(real.replace('50 Birr', '5,000.00 Birr'), { txId: 'DIG9RR30GV', amount: 5000, houseAccount: house }), { ok: true });
+  assert.match(receiptConfirms(real.replace('50 Birr', '5,000 Birr'), { txId: 'DIG9RR30GV', amount: 50, houseAccount: house }).reason, /amount 50.00/);
+});
+
 test('verifyTelebirrReceipt fetches the public receipt and never throws', async () => {
   const ok = await verifyTelebirrReceipt({ txId: 'ab12cd34ef', amount: 100, houseAccount: '0900000000' }, async (url) => {
     assert.equal(url, 'https://transactioninfo.ethiotelecom.et/receipt/AB12CD34EF');

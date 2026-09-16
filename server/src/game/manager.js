@@ -115,7 +115,11 @@ export class RoomManager {
         stake,
         room: room ? room.summary() : null,
         houseCutPercent: rules.houseCutPercent,
-        prize: { min: prizePool(stake, rules.minPlayers, rules.houseCutPercent), max: prizePool(stake, rules.maxPlayers, rules.houseCutPercent) },
+        maxPrize: rules.maxPrize,
+        prize: {
+          min: prizePool(stake, rules.minPlayers, rules.houseCutPercent, rules.maxPrize),
+          max: prizePool(stake, rules.maxPlayers, rules.houseCutPercent, rules.maxPrize),
+        },
       };
     });
   }

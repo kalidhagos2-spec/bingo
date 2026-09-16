@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Room, PHASE } from '../src/game/room.js';
+import { Room, PHASE, prizePool } from '../src/game/room.js';
 import { RoomManager } from '../src/game/manager.js';
 import { cardForCartela, completedLines } from '../src/game/bingo.js';
 
@@ -67,12 +67,13 @@ const u1 = { id: 1, first_name: 'Abebe' };
 const u2 = { id: 2, first_name: 'Kebede' };
 const u3 = { id: 3, username: 'sara' };
 
-/** Calls numbers until every number on the card is out, then marks them all. */
-function fillCard(room, timers, userId) {
+/** Calls numbers until every number on the player's first cartela is out, then marks them all. */
+function fillCard(room, timers, userId, cartela = null) {
   const player = room.players.get(userId);
-  const numbers = player.card.filter((c) => c.value !== null).map((c) => c.value);
+  const card = cartela === null ? player.cards[0] : player.cards.find((c) => c.cartela === cartela);
+  const numbers = card.cells.filter((c) => c.value !== null).map((c) => c.value);
   while (!numbers.every((n) => room.called.includes(n))) assert.ok(timers.fire());
-  for (const n of numbers) room.mark(userId, n);
+  for (const n of numbers) room.mark(userId, n, card.cartela);
   return numbers;
 }
 
@@ -125,14 +126,14 @@ test('marking validates called numbers and card membership; with fullCard off a 
   room.choose(1, 4);
   room.choose(2, 6);
   room.start();
-  const p1 = room.players.get(1);
-  const notCalled = p1.card.find((c) => c.value !== null && !room.called.includes(c.value)).value;
+  const p1 = room.players.get(1).cards[0];
+  const notCalled = p1.cells.find((c) => c.value !== null && !room.called.includes(c.value)).value;
   assert.throws(() => room.mark(1, notCalled), /not been called/);
   assert.throws(() => room.claim(1), /Not yet: 0\/1 lines/);
 
-  const row = p1.card.slice(0, 5).map((c) => c.value);
+  const row = p1.cells.slice(0, 5).map((c) => c.value);
   while (!row.every((n) => room.called.includes(n))) assert.ok(timers.fire());
-  const offCard = room.called.find((n) => !p1.card.some((c) => c.value === n));
+  const offCard = room.called.find((n) => !p1.cells.some((c) => c.value === n));
   if (offCard) assert.throws(() => room.mark(1, offCard), /not on your card/);
   for (const n of row) room.mark(1, n);
   assert.equal(room.phase, PHASE.PLAYING); // a line alone does not end it: BINGO! must be pressed
@@ -153,8 +154,8 @@ test('by default BINGO! is only accepted once every number on the card is marked
   room.choose(1, 4);
   room.choose(2, 6);
   room.start();
-  const p1 = room.players.get(1);
-  const numbers = p1.card.filter((c) => c.value !== null).map((c) => c.value);
+  const p1 = room.players.get(1).cards[0];
+  const numbers = p1.cells.filter((c) => c.value !== null).map((c) => c.value);
   while (!numbers.every((n) => room.called.includes(n))) assert.ok(timers.fire());
   for (const n of numbers.slice(0, -1)) {
     const res = room.mark(1, n);
@@ -185,7 +186,7 @@ test('after a round registration re-opens and everyone picks again', () => {
   assert.throws(() => room.choose(1, 9), /Wait for the next round/);
   assert.ok(timers.fire()); // restart delay
   assert.equal(room.phase, PHASE.WAITING);
-  assert.equal(room.players.get(1).cartela, null);
+  assert.equal(room.players.get(1).cards.length, 0);
   assert.equal(room.cardFor(1), null);
   room.choose(1, 7);
   room.choose(2, 7 + 1);
@@ -217,29 +218,65 @@ test('a cartela number always deals the same card; different cartelas differ', (
   assert.equal(new Set(a.map((c) => c.value)).size, 25);
 });
 
-test('players pick unique cartelas before the round and see their card at once', () => {
+test('players pick unique cartelas before the round and see their cards at once', () => {
   const { room, privateEvents } = makeRoom();
   room.join(u1);
-  assert.throws(() => room.choose(1, 0), /between 1 and 100/);
-  assert.throws(() => room.choose(1, 101), /between 1 and 100/);
-  assert.throws(() => room.choose(1, 1.5), /between 1 and 100/);
+  assert.throws(() => room.choose(1, 0), /between 1 and 400/);
+  assert.throws(() => room.choose(1, 401), /between 1 and 400/);
+  assert.throws(() => room.choose(1, 1.5), /between 1 and 400/);
   assert.throws(() => room.choose(2, 5), /not in this room/);
   room.choose(1, 5);
-  assert.equal(room.players.get(1).cartela, 5);
-  assert.deepEqual(room.cardFor(1).cells, cardForCartela(5));
-  assert.equal(room.cardFor(1).cartela, 5);
+  assert.deepEqual(room.players.get(1).cards.map((c) => c.cartela), [5]);
+  assert.deepEqual(room.cardFor(1).cards[0].cells, cardForCartela(5));
+  assert.equal(room.cardFor(1).cards[0].cartela, 5);
   assert.equal(privateEvents.at(-1).event, 'game:card');
 
   room.join(u2);
   assert.throws(() => room.choose(2, 5), /already taken by Abebe/);
   room.choose(2, 9);
-  room.choose(1, 5); // re-picking your own cartela is fine
-  room.choose(1, 42); // switching frees the old one
+  room.choose(1, 5); // re-picking your own cartela is a no-op
+  room.choose(1, 42); // a second cartela; the first one stays yours
+  assert.throws(() => room.choose(2, 5), /already taken by Abebe/);
+  room.release(1, 5); // giving one back frees it
+  assert.throws(() => room.release(1, 5), /do not hold cartela 5/);
   room.choose(2, 5);
   const state = room.publicState();
-  assert.deepEqual(state.players.map((p) => [p.id, p.cartela]), [[1, 42], [2, 5]]);
-  assert.equal(state.rules.cartelaCount, 100);
+  assert.deepEqual(state.players.map((p) => [p.id, p.cartelas, p.cartela]), [[1, [42], 42], [2, [5, 9], 5]]);
+  assert.equal(state.rules.cartelaCount, 400);
   assert.equal(state.ready, 2);
+  assert.equal(state.tickets, 3);
+});
+
+test('a player may hold up to maxCartelas, each paying the stake, and can win on any of them', () => {
+  const wallet = fakeWallet({ 1: 100, 2: 100 });
+  const { room, timers } = makeRoom({ maxCartelas: 4 }, { stake: 10, wallet });
+  room.join(u1);
+  room.join(u2);
+  for (const n of [11, 12, 13, 14]) room.choose(1, n);
+  assert.throws(() => room.choose(1, 15), /up to 4 cartelas/);
+  assert.equal(wallet.balances[1], 60); // 4 × 10
+  room.choose(2, 21);
+  assert.equal(room.tickets, 5);
+  assert.equal(room.summary().pool, 40); // 5 × 10 minus 20 %
+  assert.deepEqual(room.cardFor(1).cards.map((c) => c.cartela), [11, 12, 13, 14]);
+
+  room.start();
+  // Marking without a cartela hits every card of mine that carries the number.
+  const first = room.called[0];
+  const holders = room.players.get(1).cards.filter((c) => c.cells.some((x) => x.value === first));
+  if (holders.length) {
+    const res = room.mark(1, first);
+    assert.equal(res.cards.filter((c) => c.marked === 1).length, holders.length);
+  }
+  assert.throws(() => room.mark(1, first, 99), /do not hold cartela 99/);
+  assert.throws(() => room.claim(1), /Not yet/);
+  fillCard(room, timers, 1, 13);
+  assert.throws(() => room.claim(1, 11), /Not yet/); // that one is not full
+  const p = room.claim(1); // picks the full cartela by itself
+  assert.equal(p.canClaim, true);
+  assert.equal(room.winner.cartela, 13);
+  assert.equal(room.winner.prize, 40);
+  assert.equal(wallet.balances[1], 100);
 });
 
 test('players without a cartela sit the round out and can join the next one', () => {
@@ -268,7 +305,7 @@ test('leaving frees the cartela and cartelaCount never drops below maxPlayers', 
   assert.throws(() => room.choose(2, 1), /already taken/);
   room.leave(1);
   room.choose(2, 1);
-  assert.equal(room.players.get(2).cartela, 1);
+  assert.deepEqual(room.players.get(2).cards.map((c) => c.cartela), [1]);
 });
 
 test('paid table: the stake is charged on the first pick, refunded on leaving, and the pool goes to the winner', () => {
@@ -282,7 +319,8 @@ test('paid table: the stake is charged on the first pick, refunded on leaving, a
   assert.throws(() => room.choose(3, 3), /Insufficient balance: this room costs 10/);
   assert.equal(wallet.balances[3], 5);
   room.choose(1, 1);
-  room.choose(1, 2); // switching is free
+  room.release(1, 1); // giving a cartela back refunds it
+  room.choose(1, 2);
   assert.equal(wallet.balances[1], 15);
   room.choose(2, 5);
   assert.equal(wallet.balances[2], 0);
@@ -327,7 +365,7 @@ test('paid table: stakes are refunded when nobody wins', () => {
   assert.deepEqual([wallet.balances[1], wallet.balances[2]], [20, 20]);
 });
 
-test('by default the house keeps 2 % of every stake', () => {
+test('by default the house keeps 20 % of every stake', () => {
   const wallet = fakeWallet({ 1: 50, 2: 50, 3: 50 });
   const rounds = [];
   const { room, timers } = makeRoom({}, { stake: 50, wallet });
@@ -338,13 +376,29 @@ test('by default the house keeps 2 % of every stake', () => {
   room.choose(1, 1);
   room.choose(2, 2);
   room.choose(3, 3);
-  assert.equal(room.summary().pool, 147); // 3 × 50 minus 2 %
+  assert.equal(room.summary().pool, 120); // 3 × 50 minus the default 20 % house cut
   room.start();
   fillCard(room, timers, 2);
   room.claim(2);
-  assert.equal(wallet.balances[2], 147);
-  assert.equal(rounds[0].houseTake, 3);
+  assert.equal(wallet.balances[2], 120);
+  assert.equal(rounds[0].houseTake, 30);
   assert.equal(rounds[0].stakes, 150);
+});
+
+test('the prize pool never exceeds maxPrize', () => {
+  assert.equal(prizePool(50, 8, 20), 320);
+  assert.equal(prizePool(50, 8, 20, 3000), 320);
+  assert.equal(prizePool(1000, 8, 20, 3000), 3000); // 6400 capped
+  const { room } = makeRoom({ maxPrize: 25 }, { stake: 10, wallet: fakeWallet({ 1: 100, 2: 100, 3: 100 }) });
+  room.join(u1);
+  room.join(u2);
+  room.join(u3);
+  room.choose(1, 1);
+  room.choose(2, 2);
+  room.choose(3, 3);
+  assert.equal(room.summary().pool, 24); // 3 × 10 minus 20 % = 24, under the cap
+  room.rules.maxPrize = 20;
+  assert.equal(room.poolFor(3), 20);
 });
 
 test('free table needs no wallet; a paid table without one refuses picks', () => {

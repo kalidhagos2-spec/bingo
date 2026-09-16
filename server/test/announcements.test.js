@@ -46,11 +46,10 @@ test('announcements are validated, pushed live, listed while active, and removab
   assert.equal(removed.active, false);
 });
 
-test('telegram broadcast goes to Telegram players only and records the outcome', async (t) => {
+test('telegram broadcast goes to every known player and records the outcome', async (t) => {
   const store = await freshStore(t);
   await store.setProfile(1, { name: 'A' });
   await store.setProfile(2, { name: 'B' });
-  await store.setProfile(9_000_000_000_000, { email: 'x@example.com' }); // email-only: no chat
   const calls = [];
   const fetchImpl = async (url, opts) => {
     const body = JSON.parse(opts.body);

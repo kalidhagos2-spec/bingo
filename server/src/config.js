@@ -33,7 +33,10 @@ export const config = {
   minWithdraw: num('MIN_WITHDRAW', 50),
   maxWithdraw: num('MAX_WITHDRAW', 5000),
   withdrawFeePercent: num('WITHDRAW_FEE_PERCENT', 0),
-  forceMock: bool('PAYMENTS_MOCK'),
+  /** Smallest in-game wallet transfer between players, in ETB. */
+  minTransfer: num('MIN_TRANSFER', 5),
+  /** TEST ONLY: credit every transfer+receipt deposit at once, without checking the receipt. */
+  autoApproveDeposits: bool('AUTO_APPROVE_DEPOSITS'),
   // Without a bot token initData cannot be verified, so anonymous dev access is implied.
   devAllowAnon: bool('DEV_ALLOW_ANON') || !botToken,
   /** PostgreSQL connection string; see server/.env.example. */
@@ -48,9 +51,6 @@ export const config = {
   allowedOrigins: env('ALLOWED_ORIGINS').split(',').map((s) => s.trim()).filter(Boolean),
   /** Operator access to /api/admin (house ledger). Empty = open in dev mode only. */
   adminToken: env('ADMIN_TOKEN'),
-  /** Email login codes: SMTP connection URL for nodemailer; empty = log codes to the console. */
-  smtpUrl: env('SMTP_URL'),
-  mailFrom: env('MAIL_FROM', 'Telegram Bingo <no-reply@example.com>'),
 
   /** Multiplayer room rules; see game/room.js DEFAULT_RULES for defaults. */
   game: {
@@ -61,12 +61,16 @@ export const config = {
     callIntervalMs: num('CALL_INTERVAL_MS', 4000),
     countdownMs: num('COUNTDOWN_MS', 40000),
     restartDelayMs: num('RESTART_DELAY_MS', 8000),
-    cartelaCount: num('CARTELA_COUNT', 100),
-    houseCutPercent: num('HOUSE_CUT_PERCENT', 2),
+    cartelaCount: num('CARTELA_COUNT', 400),
+    /** Cartelas one player may hold per round (each pays the stake). */
+    maxCartelas: num('MAX_CARTELAS', 4),
+    houseCutPercent: num('HOUSE_CUT_PERCENT', 20),
+    /** Ceiling on any round's prize; the lobby advertises "prize up to" this amount. */
+    maxPrize: num('MAX_PRIZE', 3000),
     freeBingoCoins: num('FREE_BINGO_COINS', 50),
   },
-  /** Public tables offered in the lobby, one per stake (0 = free). */
-  stakes: [...new Set(env('STAKES', '0,10,20,50').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n >= 0))],
+  /** Public tables offered in the lobby, one per stake in ETB (a 0 entry would add a free table). */
+  stakes: [...new Set(env('STAKES', '10,20,50').split(',').map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n >= 0))],
 
   telebirr: {
     appId: env('TELEBIRR_APP_ID'),

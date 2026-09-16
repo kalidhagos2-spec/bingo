@@ -28,7 +28,7 @@ services:
     build: ./server
     container_name: tg-bingo-server
     # BOT_TOKEN / WEBAPP_URL come from bot/.env; gateway credentials from server/.env.
-    # With no gateway credentials the server runs the built-in sandbox gateway.
+    # Without gateway credentials players deposit by transfer + receipt id to the HOUSE_* accounts.
     env_file:
       - path: ./bot/.env
         required: false
@@ -36,6 +36,11 @@ services:
         required: false
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
+    # Public resolvers: the local network's DNS has been dropping lookups, which breaks
+    # receipt checks and the bot's Telegram calls (ENOTFOUND) when relayed through Docker.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,6 +56,9 @@ services:
     environment:
       API_URL: http://server:3000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     depends_on:
       postgres:
         condition: service_healthy

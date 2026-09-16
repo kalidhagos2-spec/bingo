@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STEP, SKIP, begin, applyText, applyContact, isComplete, normalizePhone, normalizeEmail, suggestedName } from '../src/signup.js';
+import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, normalizePhone, suggestedName } from '../src/signup.js';
 
-const fresh = { id: 42, firstName: 'Abebe', lastName: 'Kebede', username: 'abebe', name: null, phone: null, email: null, signup: null, signedUpAt: null };
+const fresh = { id: 42, firstName: 'Abebe', lastName: 'Kebede', username: 'abebe', name: null, phone: null, signup: null, signedUpAt: null };
 
 test('sign-up walks name -> phone -> done and marks the profile complete', () => {
   let user = begin(fresh);
   assert.equal(user.signup.step, STEP.NAME);
   assert.equal(isComplete(user), false);
+  assert.equal(hasSignedUp(user), false);
 
   let r = applyText(user, 'A');
   assert.match(r.reply, /between 2 and 32/);
@@ -16,52 +17,56 @@ test('sign-up walks name -> phone -> done and marks the profile complete', () =>
   r = applyText(user, '  Abebe K  ');
   assert.equal(r.user.name, 'Abebe K');
   assert.equal(r.user.signup.step, STEP.PHONE);
-  assert.match(r.reply, /Step 2 of 3/);
+  assert.match(r.reply, /Step 2 of 2/);
 
   const bad = applyText(r.user, 'call me');
   assert.match(bad.reply, /does not look like a phone/);
   assert.equal(bad.done, false);
 
-  const atEmail = applyText(r.user, '0900 000 000');
-  assert.equal(atEmail.done, false);
-  assert.equal(atEmail.user.phone, '+251900000000');
-  assert.equal(atEmail.user.signup.step, STEP.EMAIL);
-  assert.match(atEmail.reply, /Step 3 of 3/);
-
-  const badMail = applyText(atEmail.user, 'abebe at example');
-  assert.match(badMail.reply, /does not look like an email/);
-
-  const done = applyText(atEmail.user, ' Abebe@Example.com ');
+  const done = applyText(r.user, '0900 000 000');
   assert.equal(done.done, true);
-  assert.equal(done.user.email, 'abebe@example.com');
+  assert.equal(done.user.phone, '+251900000000');
   assert.equal(done.user.signup, null);
   assert.ok(done.user.signedUpAt);
+  assert.equal(hasSignedUp(done.user), true);
   assert.equal(isComplete(done.user), true);
   assert.match(done.reply, /Profile saved, \*Abebe K\*/);
-  assert.match(done.reply, /abebe@example.com/);
+  assert.match(done.reply, /\+251900000000/);
+  assert.doesNotMatch(done.reply, /email/i);
 });
 
-test('a shared contact completes the phone step, but only the user\'s own contact', () => {
+test("a shared contact finishes sign-up, but only the user's own contact", () => {
   const atPhone = applyText(begin(fresh), 'Abebe').user;
   const other = applyContact(atPhone, { phone_number: '+251900000000', user_id: 7 });
   assert.equal(other.done, false);
   assert.match(other.reply, /your own/);
   const mine = applyContact(atPhone, { phone_number: '251900000000', user_id: 42 });
-  assert.equal(mine.done, false);
+  assert.equal(mine.done, true);
   assert.equal(mine.user.phone, '+251900000000');
-  assert.equal(mine.user.signup.step, STEP.EMAIL);
+  assert.equal(isComplete(mine.user), true);
 });
 
-test('skipping the phone still requires an email; the profile stays incomplete without a phone', () => {
+test('skipping the phone finishes sign-up but leaves the profile incomplete', () => {
   const atPhone = applyText(begin(fresh), 'Abebe').user;
-  const r = applyText(atPhone, SKIP);
-  assert.equal(r.done, false);
-  assert.equal(r.user.phone, null);
-  assert.equal(r.user.signup.step, STEP.EMAIL);
-  const done = applyText(r.user, 'abebe@example.com');
+  const done = applyText(atPhone, SKIP);
   assert.equal(done.done, true);
+  assert.equal(done.user.phone, null);
+  assert.equal(done.user.signup, null);
+  assert.equal(hasSignedUp(done.user), true);
   assert.equal(isComplete(done.user), false);
   assert.match(done.reply, /No phone yet/);
+  // Adding the phone later (from the profile screen) completes the profile.
+  assert.equal(isComplete({ ...done.user, phone: '+251900000000' }), true);
+});
+
+test('isComplete mirrors the server rule: name and phone are required, nothing else', () => {
+  const base = { ...fresh, name: 'Abebe', phone: '+251900000000', signedUpAt: '2024-01-01T00:00:00.000Z' };
+  assert.equal(isComplete(base), true);
+  assert.equal(isComplete({ ...base, name: null }), false);
+  assert.equal(isComplete({ ...base, phone: null }), false);
+  assert.equal(isComplete(null), false);
+  assert.equal(hasSignedUp({ ...base, signedUpAt: null }), false);
+  assert.equal(hasSignedUp(null), false);
 });
 
 test('text outside a sign-up is not consumed', () => {
@@ -76,8 +81,6 @@ test('phone normalisation and suggested names', () => {
   assert.equal(normalizePhone('251900000000'), '+251900000000');
   assert.equal(normalizePhone('12'), null);
   assert.equal(normalizePhone('abc'), null);
-  assert.equal(normalizeEmail(' X@Y.com '), 'x@y.com');
-  assert.equal(normalizeEmail('x@y'), null);
   assert.equal(suggestedName(fresh), 'Abebe Kebede');
   assert.equal(suggestedName({ id: 5, username: 'sara' }), 'sara');
   assert.equal(suggestedName({ id: 5 }), 'Player 5');

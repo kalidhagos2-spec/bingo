@@ -35,11 +35,16 @@ services:
       # skip for now; set to a real secret before you rely on the admin dashboard.
       - key: ADMIN_TOKEN
         sync: false
-      # Runs the built-in sandbox payment gateway instead of real Telebirr/Chapa credentials.
-      # Flip to "false" and fill in the TELEBIRR_*/CHAPA_* vars (see server/.env.example)
-      # once you're ready to take real payments.
-      - key: PAYMENTS_MOCK
-        value: "true"
+      # Deposits: set HOUSE_TELEBIRR_ACCOUNT / HOUSE_TELEBIRR_NAME (and CBEBIRR / BOA) to your
+      # receiving accounts; add TELEBIRR_* / CHAPA_* vars for online checkout (see server/.env.example).
+      - key: HOUSE_TELEBIRR_ACCOUNT
+        sync: false
+      - key: HOUSE_TELEBIRR_NAME
+        sync: false
+      - key: HOUSE_CBEBIRR_ACCOUNT
+        sync: false
+      - key: HOUSE_CBEBIRR_NAME
+        sync: false
       - key: DEV_ALLOW_ANON
         value: "false"
       # PUBLIC_URL / PORT are not listed here: Render injects RENDER_EXTERNAL_URL and PORT

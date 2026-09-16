@@ -9,12 +9,9 @@ import { buildProviders } from './payments/registry.js';
 import { paymentsRouter } from './routes/payments.js';
 import { profileRouter } from './routes/profile.js';
 import { economyRouter } from './routes/economy.js';
-import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { createSettings } from './settings.js';
 import { createAnnouncements } from './announcements.js';
-import { createMailer } from './mailer.js';
-import { sessionUser } from './emailAuth.js';
 import { attachRealtime } from './realtime.js';
 
 if (!config.publicUrl) {
@@ -35,9 +32,10 @@ const store = new PaymentStore(pool, {
 await store.load();
 
 const providers = buildProviders(config, { paymentUrl });
-for (const p of providers.values()) {
-  console.log(`[payments] ${p.id.padEnd(9)} -> ${p.sandbox ? 'SANDBOX (no gateway credentials configured)' : 'live'}`);
-}
+const online = [...providers.keys()];
+const houseRails = Object.entries(config.houseAccounts).filter(([, a]) => a.account).map(([id]) => id);
+console.log(`[payments] online checkout: ${online.length ? online.join(', ') : 'none (no gateway credentials)'}`);
+console.log(`[payments] transfer + receipt deposits: ${houseRails.length ? houseRails.join(', ') : 'none (set HOUSE_*_ACCOUNT)'}`);
 
 const app = express();
 app.disable('x-powered-by');
@@ -62,16 +60,22 @@ app.get('/api/health', async (_req, res) => {
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM transactions');
   res.json({ ok: true, transactions: rows[0].n, ...manager.stats() });
 });
-const mailer = createMailer({ smtpUrl: config.smtpUrl, from: config.mailFrom, devAllowAnon: config.devAllowAnon });
-console.log(`[mail] login codes -> ${mailer.live ? 'SMTP' : 'server log (SMTP_URL not set)'}`);
 const auth = telegramAuth({
   botToken: config.botToken,
   devAllowAnon: config.devAllowAnon,
-  sessions: (token) => sessionUser(store, token),
   suspension: (userId) => store.suspension(userId),
 });
-app.use('/api/auth', authRouter({ store, mailer, auth }));
-app.use('/api/payments', paymentsRouter({ config, store, providers, paymentUrl, auth }));
+if (config.autoApproveDeposits) console.warn('[payments] AUTO_APPROVE_DEPOSITS is on: every deposit is credited without checking the receipt (TEST MODE)');
+app.use(
+  '/api/payments',
+  paymentsRouter({
+    config,
+    store,
+    providers,
+    auth,
+    notifyBalance: (userId, balance) => io.to(`user:${userId}`).emit('wallet:balance', { balance }),
+  }),
+);
 app.use('/api/profile', profileRouter({ config, store, auth }));
 app.use('/api/economy', economyRouter({ store, auth }));
 const announcements = createAnnouncements({ store, io, botToken: config.botToken });

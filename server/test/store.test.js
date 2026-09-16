@@ -132,28 +132,52 @@ test('adminSummary totals player balances and pending cash-outs', async (t) => {
   await store.flush();
 });
 
+test('transfer moves money between wallets at once and writes both ledger rows', async (t) => {
+  const store = await freshStore(t);
+  await store.setProfile(1, { name: 'Abebe', phone: '+251900000001' });
+  await store.setProfile(2, { name: 'Sara', phone: '+251900000002' });
+  store.adjust(1, 100, 'seed');
+  assert.deepEqual(store.playerByPhone('+251900000002').name, 'Sara');
+  assert.equal(store.playerByPhone('+251900000009'), null);
+  assert.throws(() => store.transfer({ fromId: 1, toId: 2, amount: 150 }), /Insufficient balance/);
+  assert.throws(() => store.transfer({ fromId: 1, toId: 1, amount: 10 }), /yourself/);
+  assert.throws(() => store.transfer({ fromId: 1, toId: 2, amount: 0 }), /positive/);
+  const r = store.transfer({ fromId: 1, toId: 2, amount: 40.5, note: 'Transfer Abebe → Sara' });
+  assert.deepEqual([r.senderBalance, r.recipientBalance], [59.5, 40.5]);
+  assert.deepEqual([store.balance(1), store.balance(2)], [59.5, 40.5]);
+  await store.flush();
+  const { rows } = await store.pool.query(`SELECT user_id, amount, type, status FROM transactions WHERE type = 'transfer' ORDER BY user_id`);
+  assert.deepEqual(rows, [
+    { user_id: 1, amount: -40.5, type: 'transfer', status: 'paid' },
+    { user_id: 2, amount: 40.5, type: 'transfer', status: 'paid' },
+  ]);
+  const wallets = await store.pool.query('SELECT user_id, balance FROM wallets ORDER BY user_id');
+  assert.deepEqual(wallets.rows, [{ user_id: 1, balance: 59.5 }, { user_id: 2, balance: 40.5 }]);
+  assert.equal((await store.transactionsFor(2)).filter((x) => x.type === 'transfer').length, 1);
+});
+
 test('adminPlayers merges profiles and wallets, with search', async (t) => {
   const store = await freshStore(t);
   await store.setProfile(1, { name: 'Abebe', phone: '+251900000000', email: 'abebe@example.com' });
   store.adjust(1, 120, 'seed');
   store.adjust(2, 5, 'seed'); // wallet only, no profile yet
-  await store.setProfile(9_000_000_000_000, { email: 'sara@example.com', name: 'sara' }); // email-only account
+  await store.setProfile(3, { email: 'sara@example.com', name: 'sara' }); // profile only, no wallet yet
   const all = await store.adminPlayers();
-  assert.deepEqual(all.map((p) => p.id).sort((a, b) => a - b), [1, 2, 9_000_000_000_000]);
+  assert.deepEqual(all.map((p) => p.id).sort((a, b) => a - b), [1, 2, 3]);
   const abebe = all.find((p) => p.id === 1);
   assert.equal(abebe.balance, 120);
   assert.equal(abebe.coins, 0);
   assert.ok(abebe.lastActivity);
   assert.equal(all.find((p) => p.id === 2).name, null);
-  assert.deepEqual((await store.adminPlayers('sara')).map((p) => p.id), [9_000_000_000_000]);
+  assert.deepEqual((await store.adminPlayers('sara')).map((p) => p.id), [3]);
   assert.deepEqual((await store.adminPlayers('+2519')).map((p) => p.id), [1]);
   assert.equal((await store.adminPlayers('nobody')).length, 0);
   await store.flush();
 });
 
 test('suspensions block until they expire or are lifted', async (t) => {
-  const store = await freshStore(t);
   const T0 = Date.UTC(2026, 8, 8);
+  const store = await freshStore(t, { now: () => T0 }); // pin the clock: adminPlayers() judges expiry with it
   assert.equal(store.suspension(5, T0), null);
   const s = store.suspend(5, { reason: 'Chargeback', days: 7 }, T0);
   assert.equal(s.until, '2026-09-15T00:00:00.000Z');

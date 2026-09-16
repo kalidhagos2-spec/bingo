@@ -4,7 +4,7 @@ export const SIZE = 5;
 export const FREE_INDEX = 12;
 export const MAX_NUMBER = 75;
 /** How many numbered cartelas (cards) players can pick from before a round. */
-export const CARTELA_COUNT = 100;
+export const CARTELA_COUNT = 400;
 
 /** Fisher–Yates; `pick(n)` returns an integer in [0, n). Defaults to crypto randomness. */
 export function shuffle(arr, pick = randomInt) {

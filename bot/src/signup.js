@@ -1,10 +1,8 @@
 /**
  * Sign-up state machine for the bot: pure functions over the stored user record so the
- * flow can be unit-tested without Telegram. Steps: name -> phone -> done.
+ * flow can be unit-tested without Telegram. Steps: name -> phone (optional) -> done.
  */
-export const STEP = Object.freeze({ NAME: 'name', PHONE: 'phone', EMAIL: 'email' });
-
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const STEP = Object.freeze({ NAME: 'name', PHONE: 'phone' });
 
 export const NAME_MIN = 2;
 export const NAME_MAX = 32;
@@ -16,50 +14,48 @@ export const prompts = {
     [
       `👋 Welcome${user.firstName ? `, ${user.firstName}` : ''}! Let's set up your player profile.`,
       '',
-      '*Step 1 of 3 — Display name*',
+      '*Step 1 of 2 — Display name*',
       `What name should other players see? (${NAME_MIN}–${NAME_MAX} characters)`,
     ].join('\n'),
   phone: () =>
     [
-      '*Step 2 of 3 — Phone number*',
-      'Share your phone number so we can match wallet top-ups and payouts to your account.',
+      '*Step 2 of 2 — Phone number*',
+      'Share your phone number so we can match wallet top-ups, payouts and transfers to your account.',
       'Tap the button below, or type it (e.g. +2519…).',
-    ].join('\n'),
-  email: () =>
-    [
-      '*Step 3 of 3 — Email*',
-      'Type your email address. You will use it to log in to the game outside Telegram.',
     ].join('\n'),
   done: (user) =>
     [
       `✅ Profile saved, *${user.name}*!`,
       user.phone ? `📱 ${user.phone}` : '📱 No phone yet — add it later from *My profile*.',
-      `✉️ ${user.email}`,
       '',
       'Press *Play Bingo* to open the game.',
     ].join('\n'),
   nameTooShort: `Please send a name between ${NAME_MIN} and ${NAME_MAX} characters.`,
   phoneInvalid: 'That does not look like a phone number. Tap *Share my number* or type it like +251900000000.',
-  emailInvalid: 'That does not look like an email address. Try again, e.g. name@example.com.',
 };
-
-export function normalizeEmail(text) {
-  const email = String(text ?? '').trim().toLowerCase();
-  return EMAIL_RE.test(email) && email.length <= 254 ? email : null;
-}
 
 /** Suggested name from Telegram fields. */
 export function suggestedName(user) {
   return [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.username || `Player ${user.id}`;
 }
 
-// Phone is optional (the sign-up flow's "Skip for now" button explicitly allows leaving it
-// out, with "add it later from *My profile*"), so it isn't required here -- otherwise every
-// caller of isComplete() (the /start and /play gates, the profile screen's button label)
-// would treat a user who skipped phone as never having finished sign-up, and re-run the
-// entire 3-step flow on every future /start.
+/**
+ * True once the sign-up flow has been walked through to the end, whether or not the phone
+ * step was skipped. The /start and /play gates use this so a player who chose "Skip for now"
+ * is not sent through the whole flow again.
+ */
+export function hasSignedUp(user) {
+  return Boolean(user?.signedUpAt);
+}
+
+/**
+ * True only when the profile holds a name and a phone -- the same rule the server's profile
+ * route and the Mini App's "Sign-up incomplete" badge apply. The phone step can be skipped
+ * during the flow ("add it later from *My profile*"), so a signed-up user can still have an
+ * incomplete profile.
+ */
 export function isComplete(user) {
-  return Boolean(user?.name && user?.email);
+  return Boolean(user?.name && user?.phone);
 }
 
 /** Digits with optional leading +; Ethiopian local numbers (09…) are normalised to +251. */
@@ -87,21 +83,12 @@ export function applyText(user, text) {
     return { user: { ...user, name: value, signup: { ...user.signup, step: STEP.PHONE } }, reply: prompts.phone(), done: false };
   }
   if (step === STEP.PHONE) {
-    if (value === SKIP) return toEmail(user, null);
+    if (value === SKIP) return finish({ ...user, phone: user.phone ?? null });
     const phone = normalizePhone(value);
     if (!phone) return { user, reply: prompts.phoneInvalid, done: false };
-    return toEmail(user, phone);
-  }
-  if (step === STEP.EMAIL) {
-    const email = normalizeEmail(value);
-    if (!email) return { user, reply: prompts.emailInvalid, done: false };
-    return finish({ ...user, email });
+    return finish({ ...user, phone });
   }
   return { user, reply: null, done: false };
-}
-
-function toEmail(user, phone) {
-  return { user: { ...user, phone: phone ?? user.phone ?? null, signup: { ...user.signup, step: STEP.EMAIL } }, reply: prompts.email(), done: false };
 }
 
 /** Applies a shared Telegram contact (only the user's own number is accepted). */
@@ -110,7 +97,7 @@ export function applyContact(user, contact) {
   if (contact?.user_id && contact.user_id !== user.id) return { user, reply: 'Please share *your own* contact.', done: false };
   const phone = normalizePhone(contact?.phone_number);
   if (!phone) return { user, reply: prompts.phoneInvalid, done: false };
-  return toEmail(user, phone);
+  return finish({ ...user, phone });
 }
 
 function finish(user) {

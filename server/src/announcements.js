@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto';
-import { EMAIL_ACCOUNT_BASE } from './emailAuth.js';
 
 export const LEVELS = Object.freeze(['info', 'warning', 'promo']);
 const MAX_TEXT = 500;
@@ -51,9 +50,9 @@ export function createAnnouncements({ store, io = null, botToken = '', fetchImpl
     return a;
   }
 
-  /** Telegram ids of every known player (email-only accounts have no chat). */
+  /** Telegram ids of every known player. */
   function telegramRecipients() {
-    return store.telegramRecipientIds(EMAIL_ACCOUNT_BASE);
+    return store.telegramRecipientIds();
   }
 
   /** Sends the text to each Telegram player at ~25 messages/s; progress is saved on the announcement. */

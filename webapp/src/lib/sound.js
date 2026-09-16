@@ -13,12 +13,36 @@ export function isMuted() {
 /** Toggle (or set) the mute flag; remembered per device. */
 export function setMuted(value = !muted) {
   muted = Boolean(value);
+  if (muted) speech?.cancel();
   try {
     localStorage.setItem('tgb-muted', muted ? '1' : '0');
   } catch {
     /* storage unavailable */
   }
   return muted;
+}
+
+const speech = typeof window !== 'undefined' && 'speechSynthesis' in window ? window.speechSynthesis : null;
+
+/**
+ * Voice call-out of a drawn number, letter first ("G… 57"), after the lead-in blip.
+ * Uses the browser's built-in speech synthesis, so no audio files are needed; when it is
+ * unavailable only the blip plays. A new call cancels any call-out still being spoken.
+ */
+export function announceCall(letter, number) {
+  if (muted) return;
+  playCall();
+  if (!speech) return;
+  try {
+    speech.cancel();
+    const utterance = new SpeechSynthesisUtterance(`${letter}, ${number}`);
+    utterance.lang = 'en-US';
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    speech.speak(utterance);
+  } catch {
+    /* speech unavailable in this webview */
+  }
 }
 
 function getContext() {

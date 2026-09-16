@@ -7,10 +7,9 @@ React and Tailwind CSS.
 
 ## Roadmap
 
-- ✅ Bot onboarding, sign-up (name · phone · email) & Mini App launch
+- ✅ Bot onboarding, sign-up (name · phone) & Mini App launch
 - ✅ Backend (Node.js / Express) with wallet + Ethiopian payment gateways
 - ✅ Live tables hosted by the house (Socket.io), cartelas, BINGO! claims, prize pools
-- ✅ Email login for players outside Telegram
 - ✅ Daily bonus, missions, coin shop with cartela skins
 - ✅ Persistent database (PostgreSQL, shared by every server instance)
 
@@ -26,27 +25,27 @@ tg-bingo/
 │   └── scripts/       one-off import of an old bot/data/users.json, if you have one
 ├── server/     Game server (Express + Socket.io)
 │   ├── src/game/      bingo.js (cards, cartelas), room.js (table), manager.js (lobby)
-│   ├── src/routes/    payments, profile, economy, auth (email login), admin (house)
+│   ├── src/routes/    payments, profile, economy, admin (house)
 │   ├── src/economy.js daily bonus · missions · shop rules
-│   ├── src/emailAuth.js, mailer.js, store.js, realtime.js
+│   ├── src/auth.js (Telegram initData), store.js, realtime.js
 │   ├── src/db/        schema.sql + pool.js (PostgreSQL — shared with the bot)
 │   ├── scripts/       one-off import of an old server/data/payments.json, if you have one
 │   └── test/          node --test suites (run against a real Postgres test database)
 └── webapp/     Mini App (React + Vite + Tailwind CSS v4)
     └── src/
-        ├── App.jsx                 login gate + screen routing
-        ├── components/             Game (lobby · pick · table), Wallet, Profile, Missions, Shop, Login
+        ├── App.jsx                 screen routing
+        ├── components/             Game (lobby · pick · table), Wallet, Profile, Missions, Shop
         ├── hooks/useTelegram.js    Telegram WebApp SDK wrapper (ready/expand/haptics)
-        └── lib/                    api, socket, session, sound, themes (cartela skins)
+        └── lib/                    api, socket, sound, themes (cartela skins)
 ```
 
 ## Features
 
 **Bot**
 - `/start` registers the user by Telegram ID and, the first time, walks them through a
-  three-step **sign-up**: display name (one-tap suggestion from their Telegram name),
-  phone number (Telegram *share contact* button, typed number, or *Skip for now*) and
-  the email address used to log in outside Telegram. The
+  two-step **sign-up**: display name (one-tap suggestion from their Telegram name) and
+  phone number (Telegram *share contact* button, typed number, or *Skip for now*). The
+  phone is what deposits, cash-outs and player-to-player transfers are matched on. The
   flow is a small state machine in `bot/src/signup.js` (unit-tested with `npm test`).
 - The collected fields are pushed to the game server (`POST /api/profile/sync`, signed
   with the bot token) so the Mini App's **Profile** screen shows and edits the same
@@ -56,8 +55,8 @@ tg-bingo/
 
 **Mini App**
 - **Lobby** (home screen): logo banner, coin / ETB / name pills, colourful game cards
-  (Free / 10 / 20 / 50 ETB) with entry, prize, house fee and live status plus a **JOIN**
-  button, a **Private Tournament → Create Room** card, a leaderboard, and a Missions ·
+  (10 / 20 / 50 ETB) with entry, "Prize up to `MAX_PRIZE`" and live status plus a
+  **JOIN** button (**DEPOSIT** while the balance is below the stake), a leaderboard, and a Missions ·
   Shop · Profile bottom bar. Players who have not finished sign-up see a *Finish your
   sign-up* banner and a badge on **Profile**.
 - **Daily Bonus, Missions and Shop** (coins, a soft currency that never converts to ETB):
@@ -69,17 +68,20 @@ tg-bingo/
   (default 50). API: `GET /api/economy`, `POST /api/economy/bonus/claim`,
   `POST /api/economy/missions/:id/claim`, `POST /api/economy/shop/:id/buy`,
   `POST /api/economy/theme/:theme`.
-- **Email login.** Inside Telegram players are signed in by `initData`. Everywhere else
-  (a browser, a shared link) the app shows **Log in with email**: the address gets a
-  6-digit one-time code (`POST /api/auth/email/request`), exchanged for a 30-day session
-  token (`POST /api/auth/email/verify`, sent as `Authorization: Bearer …` and as the
-  socket `auth.token`). An email already on a Telegram player's profile logs into that
-  player, so Telegram and browser sessions share one wallet, profile and stats. Set
-  `SMTP_URL` (nodemailer URL) and `MAIL_FROM` in `server/.env` to send real mail; without
-  SMTP the code is printed to the server log and, in dev mode, shown in the app.
-- **Profile** screen: avatar, display name, phone and email (editable, `PUT /api/profile`),
+- **Sign-in.** Players are identified by Telegram `initData` (verified against
+  `BOT_TOKEN` on every API call and socket handshake). There is no separate login: the
+  game is played from inside Telegram. Outside Telegram only dev mode (`DEV_ALLOW_ANON`)
+  serves guest players, for local testing.
+- **Profile** screen: avatar, display name and phone (editable, `PUT /api/profile`),
   Telegram username and id, sign-up status, and stats (games, wins, ETB won) that the
   server records at the end of every round (`GET /api/profile/leaderboard`).
+- **Send** screen (bottom bar): in-game wallet transfer to another player by the phone
+  number they signed up with. The recipient's name is shown before sending
+  (`GET /api/payments/recipient?phone=`), the money moves instantly and fee-free
+  (`POST /api/payments/transfer {phone, amount}`, minimum `MIN_TRANSFER`, default 5 ETB),
+  both wallets get a `transfer` ledger row and a live balance push over the socket.
+- `AUTO_APPROVE_DEPOSITS=true` (test only) credits every transfer+receipt deposit at once
+  without checking the receipt; the server logs a warning at startup while it is on.
 - **Wallet** screen: ETB balance, top-up through the payment gateways, **cash-out**
   requests with pending / paid / rejected status and a cancel button, and the activity
   ledger (top-ups, stakes, refunds, prizes, cash-outs).
@@ -148,12 +150,15 @@ numbered cartelas, a called-number board, a BINGO! claim button):
   row shows live status: *Registering*, *N s* until start, *In progress · call N*, the
   number of players, and the prize pool. Tap a row to sit down. Private rooms with a
   4-letter code are still available under *Play with friends*.
-- **Cartelas.** While registration is open every player picks a numbered cartela (1–100
-  by default). Each number is a fixed card, so cartela #17 is the same card everywhere.
-  The 10-column grid shows taken numbers in red with the owner's name, yours in green.
-  On a paid table the stake is charged from the wallet on the first pick (switching is
-  free) and refunded if you leave before the round starts. Players without a cartela
-  watch the round and can register for the next one.
+- **Cartelas.** While registration is open every player picks up to `MAX_CARTELAS`
+  (default **4**) numbered cartelas out of `CARTELA_COUNT` (default **400**). Each number
+  is a fixed card, so cartela #17 is the same card everywhere. The 10-column grid shows
+  taken numbers in red with the owner's name, yours in green; tapping one of yours gives
+  it back. On a paid table every cartela is charged from the wallet when picked and
+  refunded when released or if you leave before the round starts. During the round all
+  your cartelas are shown stacked beside the master board, each marked separately, and
+  BINGO! wins on whichever of them is complete. Players without a cartela watch the round
+  and can register for the next one.
 - **Timer.** Once `MIN_PLAYERS` players hold a cartela a **40 s** countdown starts
   (`COUNTDOWN_MS`). The **house hosts every table**: the server starts the round when the
   timer ends and calls the numbers; no player can start or control a game. **Start Game** takes you to the
@@ -165,7 +170,8 @@ numbered cartelas, a called-number board, a BINGO! claim button):
 - **Winning.** Press **BINGO!** once every number on your card is marked (`FULL_CARD`,
   default) — or after `LINES_TO_WIN` lines with `FULL_CARD=false`. A premature claim is
   rejected with your progress. The winner gets the pool: stakes minus
-  `HOUSE_CUT_PERCENT` — the house keeps **2 %** of every player's stake by default and the
+  `HOUSE_CUT_PERCENT`, capped at `MAX_PRIZE` (default **3000 ETB**) — the house keeps
+  **20 %** of every player's stake by default (not shown to players) and the
   fee of each played round is written to a house ledger (`GET /api/admin/house`, header
   `x-admin-token: ADMIN_TOKEN`). If all 75 numbers run out, stakes are refunded in full
   and the house takes nothing.
@@ -194,9 +200,10 @@ them top it up through Ethiopian payment rails:
 | CBE Birr            | [Chapa](https://chapa.co) hosted checkout                | `CHAPA_SECRET_KEY`          |
 | Bank of Abyssinia   | Chapa hosted checkout                                    | `CHAPA_SECRET_KEY`          |
 
-- Telebirr falls back to Chapa when only Chapa is configured. Any method with no
-  gateway configured uses a built-in **sandbox** checkout page (also forced by
-  `PAYMENTS_MOCK=true`), so the whole flow runs locally and in Docker with zero keys.
+- Telebirr falls back to Chapa when only Chapa is configured. A method with no gateway
+  credentials is not offered for online checkout. Deposits by **transfer + receipt id**
+  to the `HOUSE_*_ACCOUNT` numbers need no gateway at all, so that is the default way
+  to fund a wallet; there is no sandbox or mock gateway.
 - Requests from the Mini App are authenticated by verifying Telegram `initData`
   against `BOT_TOKEN`; a wallet can only be credited after the gateway confirms.
 - The house keeps `DEPOSIT_FEE_PERCENT` (default **2 %**) of every confirmed top-up: a
@@ -212,13 +219,18 @@ API: `GET /api/payments/methods`, `GET /api/payments/wallet`,
 
 ### Deposit by transfer + pasted receipt id
 
-Besides the hosted checkout, players can pay the way most Ethiopian bingo apps work: the
-wallet screen's **Transfer + receipt id** option shows the house's Telebirr / CBE Birr /
-Bank of Abyssinia numbers with **COPY** buttons (`HOUSE_*_ACCOUNT` / `HOUSE_*_NAME`, also
-editable in the dashboard *Settings → House accounts*), the player transfers the amount,
-then pastes the **transaction id** from the receipt (a **PASTE** button reads the
-clipboard). `POST /api/payments/deposit {method, amount, txId}` records it as a pending
-deposit; an id can confirm one deposit only.
+This is the default way to fund a wallet and works the way most Ethiopian bingo apps do:
+the wallet's **Deposit** tab shows a **Bank accounts** grid of the house's Telebirr /
+CBE Birr / Bank of Abyssinia accounts, each card with the account name, number and a
+**COPY** button (`HOUSE_*_ACCOUNT` / `HOUSE_*_NAME`, comma-separated for several accounts
+per rail, also editable in the dashboard *Settings → House accounts*). The player copies
+a number, transfers the amount, then pastes the **transaction id** from the receipt (a
+**PASTE** button reads the clipboard). `POST /api/payments/deposit {method, account,
+amount, txId}` records it as a pending deposit; an id can confirm one deposit only. When
+no house account is configured the tab says deposits open soon. Paid tables in the lobby
+show **DEPOSIT** instead of **JOIN** while the balance is below the stake, and that
+button opens this tab with the missing amount pre-filled. Online checkout (**Pay online**)
+appears alongside only when a gateway is configured.
 
 - **Telebirr** receipts are public (`transactioninfo.ethiotelecom.et/receipt/<id>`), so the
   server fetches the receipt and confirms automatically when it shows the id, the amount
@@ -282,7 +294,7 @@ Endpoints: `GET /api/admin/summary`, `GET /api/admin/house`, `GET /api/admin/rou
   once merchant credentials for disbursements are available.
 
 > Real-money games are regulated in Ethiopia (National Lottery Administration) and each
-> gateway issues merchant credentials only under contract. Keep the sandbox for demos.
+> gateway issues merchant credentials only under contract.
 
 ## Run with Docker
 
@@ -340,8 +352,8 @@ The script syncs the checkout to `/opt/tg-bingo`, asks once for `BOT_TOKEN` and 
 `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build` and waits
 for `https://bingo.example.com/api/health`. Re-run it after every change. Afterwards set
 the Mini App URL in @BotFather (`/setmenubutton` → `https://bingo.example.com`) and, for
-real payments, put the gateway credentials and `PAYMENTS_MOCK=false` in `server/.env` on
-the host. Backups: `scripts/backup.sh` / `scripts/restore.sh` dump the bundled Postgres.
+deposits, put the `HOUSE_*_ACCOUNT` numbers (and any gateway credentials) in `server/.env`
+on the host. Backups: `scripts/backup.sh` / `scripts/restore.sh` dump the bundled Postgres.
 
 ## Deploy for free (Render + Neon + Vercel)
 

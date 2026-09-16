@@ -10,8 +10,7 @@
 --     synchronous in-memory mirror of (see store.js) because room.js / realtime.js
 --     charge, credit and track mission progress inline in the Socket.io hot path and
 --     cannot await a query there. Everything else (transactions, rounds, the house
---     ledger, settings, announcements, email login) is read and written straight
---     against Postgres.
+--     ledger, settings, announcements) is read and written straight against Postgres.
 --   * `bot_users` is the Telegram bot's own sign-up store; it lives in the same
 --     database (simplest single-service deployment) but is never joined against the
 --     game server's tables — the two stay in sync only through POST /api/profile/sync.
@@ -131,33 +130,13 @@ CREATE TABLE IF NOT EXISTS announcements (
 -- same clock tick (or a caller-supplied fixed clock, as in tests) still sort newest-first.
 CREATE INDEX IF NOT EXISTS announcements_active_idx ON announcements (active, seq DESC);
 
--- ---------- email login (server/src/emailAuth.js) ----------
-
-CREATE TABLE IF NOT EXISTS login_codes (
-  email       TEXT PRIMARY KEY,
-  code        TEXT NOT NULL,
-  expires_at  TIMESTAMPTZ NOT NULL,
-  attempts    INT NOT NULL DEFAULT 0
-);
-
--- Email-only accounts (no Telegram profile) get an id far above the Telegram id range,
--- handed out in order — mirrors the JSON store's `nextEmailId++` but atomic under
--- concurrent requests.
-CREATE SEQUENCE IF NOT EXISTS email_account_ids START WITH 9000000000000 INCREMENT BY 1;
-
-CREATE TABLE IF NOT EXISTS email_accounts (
-  email    TEXT PRIMARY KEY,
-  user_id  BIGINT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-  token       TEXT PRIMARY KEY,
-  user_id     BIGINT NOT NULL,
-  email       TEXT NOT NULL,
-  created_at  TIMESTAMPTZ NOT NULL,
-  expires_at  TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions (expires_at);
+-- ---------- removed feature: email login ----------
+-- Players sign in only through Telegram now. Databases created while the email login
+-- existed still carry these objects; drop them so nothing stale lingers.
+DROP TABLE IF EXISTS login_codes;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS email_accounts;
+DROP SEQUENCE IF EXISTS email_account_ids;
 
 -- ---------- Telegram bot sign-up store (bot/src/users.js) ----------
 

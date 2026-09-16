@@ -25,13 +25,16 @@ const iso = (d = Date.now()) => new Date(d).toISOString();
  * piece, the operator settings overrides, gets the same treatment because they are
  * read on every request that builds a room.
  *
- * Everything else — transactions, rounds, the house ledger, announcements and email
- * login — has no in-memory mirror and is read and written straight against Postgres;
+ * Everything else — transactions, rounds, the house ledger and announcements — has
+ * no in-memory mirror and is read and written straight against Postgres;
  * every route that touches them is already (or is now) an `async` handler.
  */
 export class PaymentStore {
-  constructor(pool, { currency = 'ETB', depositFeePercent = 0, withdrawFeePercent = 0 } = {}) {
+  constructor(pool, { currency = 'ETB', depositFeePercent = 0, withdrawFeePercent = 0, now = Date.now } = {}) {
     this.pool = pool;
+    // Clock used wherever "is this still in force?" is decided (suspension expiry). Injectable so
+    // tests can pin it; every read that omits `now` (adminPlayers, the auth hooks) goes through it.
+    this.now = now;
     this.currency = currency;
     this.depositFeePercent = depositFeePercent;
     this.withdrawFeePercent = withdrawFeePercent;
@@ -104,6 +107,51 @@ export class PaymentStore {
       }),
     );
     return next;
+  }
+
+  /**
+   * Moves `amount` from one wallet to another (player-to-player transfer). The in-memory
+   * mirror changes at once so the sender cannot spend the money twice; both ledger rows and
+   * both wallet updates land in Postgres in one transaction. Returns the new balances.
+   */
+  transfer({ fromId, toId, amount, note = '' }) {
+    const value = money(amount);
+    if (!(value > 0)) throw new Error('Amount must be positive');
+    if (fromId === toId) throw new Error('You cannot send money to yourself');
+    const from = (this.data.wallets[fromId] ??= { balance: 0 });
+    const to = (this.data.wallets[toId] ??= { balance: 0 });
+    if (from.balance < value) throw new Error(`Insufficient balance: you have ${from.balance.toFixed(2)} ${this.currency}`);
+    from.balance = money(from.balance - value);
+    to.balance = money(to.balance + value);
+    const now = new Date();
+    const ref = PaymentStore.newRef();
+    const rows = [
+      { ref, userId: fromId, amount: -value, note: note || `Sent to ${toId}` },
+      { ref: PaymentStore.newRef(), userId: toId, amount: value, note: note || `Received from ${fromId}` },
+    ];
+    this._enqueue(() =>
+      withTransaction(this.pool, async (client) => {
+        for (const r of rows) {
+          await client.query(
+            `INSERT INTO wallets (user_id, balance, updated_at) VALUES ($1, $2, now())
+             ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + $2, updated_at = now()`,
+            [r.userId, r.amount],
+          );
+          await client.query(
+            `INSERT INTO transactions (ref, user_id, type, method, amount, currency, status, note, provider_ref, created_at, updated_at)
+             VALUES ($1, $2, 'transfer', 'transfer', $3, $4, $5, $6, $7, $8, $8)`,
+            [r.ref, r.userId, r.amount, this.currency, STATUS.PAID, r.note, ref, now],
+          );
+        }
+      }),
+    );
+    return { ref, senderBalance: from.balance, recipientBalance: to.balance };
+  }
+
+  /** The player whose profile carries this (normalised) phone number, or null. */
+  playerByPhone(phone) {
+    for (const [id, p] of Object.entries(this.data.profiles)) if (p.phone && p.phone === phone) return { id: Number(id), ...p };
+    return null;
   }
 
   // ---------- profiles (collected by the bot at sign-up, editable in the Mini App) ----------
@@ -286,7 +334,7 @@ export class PaymentStore {
   // ---------- suspensions ----------
 
   /** Blocks a player: `days` null = permanent ban. Persisted; returns the suspension record. */
-  suspend(userId, { reason = 'Suspended by operator', days = null, by = 'operator' } = {}, now = Date.now()) {
+  suspend(userId, { reason = 'Suspended by operator', days = null, by = 'operator' } = {}, now = this.now()) {
     const profile = this.ensureProfile(userId);
     const until = days ? new Date(now + Number(days) * 86_400_000).toISOString() : null;
     profile.suspended = { at: iso(now), reason, until, by };
@@ -303,7 +351,7 @@ export class PaymentStore {
   }
 
   /** The active suspension for a player, or null (expired ones count as lifted). */
-  suspension(userId, now = Date.now()) {
+  suspension(userId, now = this.now()) {
     const s = this.data.profiles[userId]?.suspended;
     if (!s) return null;
     if (s.until && new Date(s.until).getTime() <= now) return null;
@@ -707,67 +755,11 @@ export class PaymentStore {
     await this.pool.query('UPDATE announcements SET telegram = $1 WHERE id = $2', [JSON.stringify(telegram), id]);
   }
 
-  /** Telegram ids of every known player (email-only accounts have far larger ids and no chat). */
-  telegramRecipientIds(emailAccountBase) {
+  /** Telegram ids of every known player. */
+  telegramRecipientIds() {
     return Object.keys(this.data.profiles)
       .map(Number)
-      .filter((id) => Number.isInteger(id) && id > 0 && id < emailAccountBase);
-  }
-
-  // ---------- email login (server/src/emailAuth.js) ----------
-
-  async getLoginCode(email) {
-    const { rows } = await this.pool.query('SELECT code, expires_at, attempts FROM login_codes WHERE email = $1', [email]);
-    return rows[0] ? { code: rows[0].code, expiresAt: rows[0].expires_at.getTime(), attempts: rows[0].attempts } : null;
-  }
-
-  async saveLoginCode(email, { code, expiresAt, attempts = 0 }) {
-    await this.pool.query(
-      `INSERT INTO login_codes (email, code, expires_at, attempts) VALUES ($1,$2,$3,$4)
-       ON CONFLICT (email) DO UPDATE SET code = $2, expires_at = $3, attempts = $4`,
-      [email, code, new Date(expiresAt), attempts],
-    );
-  }
-
-  async deleteLoginCode(email) {
-    await this.pool.query('DELETE FROM login_codes WHERE email = $1', [email]);
-  }
-
-  /** Which player owns this email: a Telegram profile that added it, or an email-only account. */
-  async userIdForEmail(email) {
-    for (const [id, p] of Object.entries(this.data.profiles)) if (p.email === email) return Number(id);
-    const { rows } = await this.pool.query('SELECT user_id FROM email_accounts WHERE email = $1', [email]);
-    if (rows[0]) return rows[0].user_id;
-    return withTransaction(this.pool, async (client) => {
-      const seq = await client.query("SELECT nextval('email_account_ids') AS id");
-      const id = seq.rows[0].id;
-      await client.query('INSERT INTO email_accounts (email, user_id) VALUES ($1, $2)', [email, id]);
-      return id;
-    });
-  }
-
-  /** The email-only account id bound to this address (email_accounts table), or null. */
-  async emailAccountOwner(email) {
-    const { rows } = await this.pool.query('SELECT user_id FROM email_accounts WHERE email = $1', [email]);
-    return rows[0]?.user_id ?? null;
-  }
-
-  async createSession(token, { userId, email, createdAt, expiresAt }) {
-    await this.pool.query(
-      'INSERT INTO sessions (token, user_id, email, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)',
-      [token, userId, email, new Date(createdAt), new Date(expiresAt)],
-    );
-  }
-
-  async getSession(token) {
-    const { rows } = await this.pool.query('SELECT * FROM sessions WHERE token = $1', [token]);
-    if (!rows[0]) return null;
-    return { userId: rows[0].user_id, email: rows[0].email, createdAt: rows[0].created_at.getTime(), expiresAt: rows[0].expires_at.getTime() };
-  }
-
-  async deleteSession(token) {
-    const { rowCount } = await this.pool.query('DELETE FROM sessions WHERE token = $1', [token]);
-    return rowCount > 0;
+      .filter((id) => Number.isInteger(id) && id > 0);
   }
 }
 

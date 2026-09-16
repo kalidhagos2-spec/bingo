@@ -1,9 +1,15 @@
 import { Router, json } from 'express';
-import { normalizeEmail } from '../emailAuth.js';
 
 const NAME_MIN = 2;
 const NAME_MAX = 32;
 const PHONE_RE = /^\+?\d{7,15}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Lower-cased, trimmed email; null if invalid. Same rule as the bot's sign-up. */
+export function normalizeEmail(text) {
+  const email = String(text ?? '').trim().toLowerCase();
+  return EMAIL_RE.test(email) && email.length <= 254 ? email : null;
+}
 
 const clean = (obj) => Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 
@@ -15,12 +21,11 @@ export function normalizePhone(text) {
   return raw.startsWith('+') ? raw : `+${raw}`;
 }
 
-/** Id of another account already holding this email, if any. */
-async function emailOwner(store, email, exceptId) {
+/** Id of another player's profile already holding this email, if any. */
+function emailOwner(store, email, exceptId) {
   if (!email) return null;
   for (const [id, p] of Object.entries(store.data.profiles)) if (p.email === email && Number(id) !== exceptId) return Number(id);
-  const account = await store.emailAccountOwner(email);
-  return account && account !== exceptId ? account : null;
+  return null;
 }
 
 /** Public shape of a profile: stored fields merged with what Telegram tells us about the user. */
@@ -30,13 +35,13 @@ export function profileView(user, profile) {
     id: user.id,
     name: profile?.name ?? [user.first_name, user.last_name].filter(Boolean).join(' ') ?? null,
     phone: profile?.phone ?? null,
-    email: profile?.email ?? user.email ?? null,
+    email: profile?.email ?? null,
     username: user.username ?? profile?.username ?? null,
     firstName: user.first_name ?? profile?.firstName ?? null,
     signedUpAt: profile?.signedUpAt ?? null,
     updatedAt: profile?.updatedAt ?? null,
     stats,
-    complete: Boolean(profile?.name && profile?.phone && (profile?.email ?? user.email)),
+    complete: Boolean(profile?.name && profile?.phone),
   };
 }
 
@@ -54,9 +59,13 @@ export function profileRouter({ config, store, auth }) {
     const { id, name, phone, email, username, firstName, lastName, signedUpAt } = req.body ?? {};
     const userId = Number(id);
     if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'id required' });
-    const taken = email && (await emailOwner(store, normalizeEmail(email), userId));
+    const taken = email && emailOwner(store, normalizeEmail(email), userId);
     if (taken) return res.status(409).json({ error: 'Email already used by another account' });
-    const profile = await store.setProfile(userId, clean({ name, phone, email: email ? normalizeEmail(email) ?? undefined : email, username, firstName, lastName, signedUpAt }));
+    // Phones are stored normalised (+251…) so transfers by phone number find the player.
+    const profile = await store.setProfile(
+      userId,
+      clean({ name, phone: phone ? (normalizePhone(phone) ?? undefined) : phone, email: email ? normalizeEmail(email) ?? undefined : email, username, firstName, lastName, signedUpAt }),
+    );
     res.json(profileView({ id: userId, first_name: firstName, last_name: lastName, username }, profile));
   });
 
@@ -92,14 +101,14 @@ export function profileRouter({ config, store, auth }) {
       else {
         const email = normalizeEmail(text);
         if (!email) return res.status(400).json({ error: 'Enter a valid email address' });
-        if (await emailOwner(store, email, req.user.id)) return res.status(409).json({ error: 'Email already used by another account' });
+        if (emailOwner(store, email, req.user.id)) return res.status(409).json({ error: 'Email already used by another account' });
         patch.email = email;
       }
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'Nothing to update' });
     const existing = store.profile(req.user.id);
     const after = { ...existing, ...patch };
-    if (!existing?.signedUpAt && after.name && after.phone && after.email) patch.signedUpAt = new Date().toISOString();
+    if (!existing?.signedUpAt && after.name && after.phone) patch.signedUpAt = new Date().toISOString();
     const profile = await store.setProfile(req.user.id, patch);
     res.json(profileView(req.user, profile));
   });

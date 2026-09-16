@@ -180,7 +180,7 @@ async function loadPlayers() {
   const { players, total } = await api('/api/admin/players?q=' + encodeURIComponent(q));
   $('#pcount').textContent = total + ' player' + (total === 1 ? '' : 's');
   $('#prows').innerHTML = players.length ? players.map((p) => '<tr class="prow" data-player="' + p.id + '" style="cursor:pointer">' +
-    '<td>' + p.id + (p.id >= 9e12 ? ' <span class="muted">(email)</span>' : '') + '</td><td>' + (p.name ?? '') + '</td><td>' + (p.username ? '@' + p.username : '') + '</td><td>' + (p.phone ?? '') + '</td><td>' + (p.email ?? '') + '</td>' +
+    '<td>' + p.id + '</td><td>' + (p.name ?? '') + '</td><td>' + (p.username ? '@' + p.username : '') + '</td><td>' + (p.phone ?? '') + '</td><td>' + (p.email ?? '') + '</td>' +
     '<td>' + (p.signedUpAt ? new Date(p.signedUpAt).toLocaleDateString() : '<span class="muted">not finished</span>') + '</td>' +
     '<td class="right"><b>' + money(p.balance) + '</b></td><td class="right">' + p.coins + '</td><td class="right">' + p.stats.games + '</td><td class="right">' + p.stats.wins + '</td><td class="right">' + money(p.stats.winnings) + '</td>' +
     '<td class="muted">' + when(p.lastActivity) + '</td>' +

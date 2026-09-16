@@ -30,7 +30,7 @@ const data = JSON.parse(raw);
 const pool = createPool(databaseUrl);
 await migrate(pool);
 
-let counts = { wallets: 0, profiles: 0, transactions: 0, rounds: 0, houseLedger: 0, announcements: 0, loginCodes: 0, emailAccounts: 0, sessions: 0 };
+let counts = { wallets: 0, profiles: 0, transactions: 0, rounds: 0, houseLedger: 0, announcements: 0 };
 
 // ---------- wallets ----------
 for (const [userId, w] of Object.entries(data.wallets ?? {})) {
@@ -164,38 +164,8 @@ for (const a of data.announcements ?? []) {
   counts.announcements++;
 }
 
-// ---------- email login: pending codes, email accounts, sessions ----------
-for (const [email, code] of Object.entries(data.loginCodes ?? {})) {
-  await pool.query(
-    `INSERT INTO login_codes (email, code, expires_at, attempts) VALUES ($1,$2,$3,$4)
-     ON CONFLICT (email) DO UPDATE SET code=$2, expires_at=$3, attempts=$4`,
-    [email, code.code, new Date(code.expiresAt), code.attempts ?? 0],
-  );
-  counts.loginCodes++;
-}
-for (const [email, userId] of Object.entries(data.emailAccounts ?? {})) {
-  await pool.query(
-    `INSERT INTO email_accounts (email, user_id) VALUES ($1,$2) ON CONFLICT (email) DO UPDATE SET user_id = $2`,
-    [email, userId],
-  );
-  counts.emailAccounts++;
-}
-// Keep the atomic id sequence ahead of every id already handed out (old counter + any migrated rows).
-await pool.query(
-  `SELECT setval('email_account_ids', GREATEST(
-     (SELECT COALESCE(MAX(user_id), 8999999999999) FROM email_accounts),
-     $1::bigint - 1
-   ))`,
-  [data.nextEmailId ?? 9_000_000_000_000],
-);
-for (const [token, s] of Object.entries(data.sessions ?? {})) {
-  await pool.query(
-    `INSERT INTO sessions (token, user_id, email, created_at, expires_at) VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (token) DO UPDATE SET user_id=$2, email=$3, created_at=$4, expires_at=$5`,
-    [token, s.userId, s.email, new Date(s.createdAt), new Date(s.expiresAt)],
-  );
-  counts.sessions++;
-}
+// Old JSON files may still hold email-login data (loginCodes, emailAccounts, sessions);
+// that feature is gone, so those keys are intentionally not migrated.
 
 console.log(`Migrated ${file} -> ${databaseUrl.replace(/:[^:@]*@/, ':***@')}`);
 console.table(counts);

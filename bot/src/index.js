@@ -5,7 +5,7 @@ import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import { UserStore } from './users.js';
 import { createPool, migrate } from './db/pool.js';
-import { STEP, SKIP, begin, applyText, applyContact, isComplete, suggestedName, prompts } from './signup.js';
+import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, suggestedName, prompts } from './signup.js';
 
 const { BOT_TOKEN, WEBAPP_URL, DATABASE_URL } = process.env;
 const API_URL = (process.env.API_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -110,7 +110,7 @@ async function continueSignup(ctx, user, apply) {
 
 bot.start(async (ctx) => {
   const { user } = await store.register(ctx.from);
-  if (!isComplete(user)) {
+  if (!hasSignedUp(user)) {
     await beginSignup(ctx, user);
     return;
   }
@@ -122,7 +122,7 @@ bot.start(async (ctx) => {
 
 bot.command('play', async (ctx) => {
   const { user } = await store.register(ctx.from);
-  if (!isComplete(user)) return beginSignup(ctx, user);
+  if (!hasSignedUp(user)) return beginSignup(ctx, user);
   await ctx.reply('Tap below to open the Bingo Mini App 👇', mainKeyboard());
 });
 
@@ -138,7 +138,6 @@ async function showProfile(ctx) {
       `ID: \`${user.id}\``,
       user.username ? `Username: @${user.username}` : null,
       `Phone: ${user.phone ?? '— not added'}`,
-      `Email: ${user.email ?? '— not added'}`,
       user.signedUpAt ? `Signed up: ${new Date(user.signedUpAt).toLocaleDateString()}` : '⚠️ Sign-up not finished',
     ]
       .filter(Boolean)
@@ -170,8 +169,8 @@ bot.action('help', async (ctx) => {
   await ctx.reply(
     [
       '🎱 *How to play*',
-      '1. Press *Play Bingo* and pick a game (free or with an ETB entry).',
-      '2. Choose your cartela number before the 40 s timer runs out.',
+      '1. Press *Play Bingo* and pick a table (10, 20 or 50 ETB entry from your wallet).',
+      '2. Pick up to 4 cartelas (1–400) before the 40 s timer runs out; each one pays the entry.',
       '3. Numbers are called automatically — tap them on your card.',
       '4. Press *BINGO!* when every number on your card is marked to win the prize. 🏆',
     ].join('\n'),
@@ -203,11 +202,16 @@ bot.catch((err, ctx) => {
   console.error(`Error handling update ${ctx.update.update_id}:`, err);
 });
 
-await bot.telegram.setMyCommands([
-  { command: 'start', description: 'Sign up and get the Play button' },
-  { command: 'play', description: 'Open the Bingo Mini App' },
-  { command: 'profile', description: 'View or edit your profile' },
-]);
+// Cosmetic: a DNS blip here must not crash the bot before it even starts polling.
+try {
+  await bot.telegram.setMyCommands([
+    { command: 'start', description: 'Sign up and get the Play button' },
+    { command: 'play', description: 'Open the Bingo Mini App' },
+    { command: 'profile', description: 'View or edit your profile' },
+  ]);
+} catch (err) {
+  console.warn(`[bot] could not register command menu (${err.code ?? err.message}); continuing`);
+}
 
 // Long polling (bot.launch()) keeps its own connection open to Telegram and can't be woken
 // back up by anything -- fine for local dev / docker-compose, but wrong for a free hosting
@@ -242,9 +246,18 @@ if (WEBHOOK_URL) {
   process.once('SIGINT', () => server.close(() => process.exit(0)));
   process.once('SIGTERM', () => server.close(() => process.exit(0)));
 } else {
-  bot.launch(() => {
-    console.log(`Bot started (polling). ${store.size} registered user(s). Mini App: ${WEBAPP_URL}. API: ${API_URL}`);
-  });
+  // Telegram can be slow to reach from here; a timed-out getMe must not kill the process.
+  const launch = (attempt = 1) =>
+    bot
+      .launch(() => {
+        console.log(`Bot started (polling). ${store.size} registered user(s). Mini App: ${WEBAPP_URL}. API: ${API_URL}`);
+      })
+      .catch((err) => {
+        const wait = Math.min(60, 5 * attempt);
+        console.warn(`[bot] launch attempt ${attempt} failed (${err.code ?? err.message}); retrying in ${wait}s`);
+        setTimeout(() => launch(attempt + 1), wait * 1000);
+      });
+  launch();
 
   process.once('SIGINT', () => bot.stop('SIGINT'));
   process.once('SIGTERM', () => bot.stop('SIGTERM'));

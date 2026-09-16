@@ -1,8 +1,7 @@
 import { telebirrProvider } from './telebirr.js';
 import { chapaProvider } from './chapa.js';
-import { mockProvider } from './mock.js';
 
-/** Payment methods offered to players, in display order. */
+/** Payment rails players can deposit from and cash out to, in display order. */
 export const METHODS = [
   { id: 'telebirr', label: 'Telebirr', description: 'Ethio Telecom mobile money', methodHint: 'Telebirr' },
   { id: 'cbebirr', label: 'CBE Birr', description: 'Commercial Bank of Ethiopia', methodHint: 'CBE Birr' },
@@ -10,32 +9,23 @@ export const METHODS = [
 ];
 
 /**
- * Builds the provider map. Telebirr uses the direct Web API when its credentials are
- * set, otherwise Chapa. CBE Birr and BoA go through Chapa. Any method without a real
- * gateway configured falls back to the sandbox provider, unless PAYMENTS_MOCK forces it.
+ * Online checkout providers, keyed by method id. Telebirr uses the direct Web API when
+ * its credentials are set, otherwise Chapa; CBE Birr and BoA go through Chapa. A method
+ * with no gateway credentials is simply absent: players can still deposit to the house
+ * accounts by transfer + receipt id (see routes/payments.js), which needs no gateway.
  */
 export function buildProviders(config, deps) {
   const providers = new Map();
-  const real = {};
-  if (!config.forceMock) {
-    const telebirr = telebirrProvider(config.telebirr, deps);
-    for (const m of METHODS) {
-      const viaChapa = chapaProvider(m, config.chapa, deps);
-      const direct = m.id === 'telebirr' && telebirr.available ? telebirr : null;
-      real[m.id] = direct ?? (viaChapa.available ? viaChapa : null);
-    }
-  }
+  const telebirr = telebirrProvider(config.telebirr, deps);
   for (const m of METHODS) {
-    providers.set(m.id, real[m.id] ?? mockProvider(m, deps));
+    const viaChapa = chapaProvider(m, config.chapa, deps);
+    const direct = m.id === 'telebirr' && telebirr.available ? telebirr : null;
+    const provider = direct ?? (viaChapa.available ? viaChapa : null);
+    if (provider) providers.set(m.id, provider);
   }
   return providers;
 }
 
 export function describeProviders(providers) {
-  return [...providers.values()].map((p) => ({
-    id: p.id,
-    label: p.label,
-    description: p.description,
-    sandbox: Boolean(p.sandbox),
-  }));
+  return [...providers.values()].map((p) => ({ id: p.id, label: p.label, description: p.description }));
 }
