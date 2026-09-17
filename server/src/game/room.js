@@ -362,6 +362,17 @@ export class Room {
     this.timer = null;
   }
 
+  /**
+   * The server is going down with this table still live. A round that cannot be finished is
+   * void: every cartela still in play gets its stake back, whether registration was open or
+   * numbers were already being called. (After FINISHED the prize is paid; nothing to return.)
+   */
+  abort() {
+    this.clearTimer();
+    if (this.phase !== PHASE.FINISHED) for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela);
+    this.players.clear();
+  }
+
   destroy() {
     this.clearTimer();
     if (this.open) for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela);

@@ -505,3 +505,43 @@ test('manager: destroying an open paid room refunds picks', () => {
   assert.equal(wallet.balances[1], 50);
   assert.equal(manager.rooms.size, 0);
 });
+
+test('manager: a server shutdown voids unfinished rounds and refunds every stake, but not a finished round', () => {
+  const wallet = fakeWallet({ 1: 100, 2: 100, 3: 100 });
+  const manager = new RoomManager({ emit() {}, emitTo() {}, wallet, stakes: [10, 20] });
+
+  // Table A: numbers are already being called when the server stops.
+  const live = manager.joinStake(u1, 10);
+  manager.joinStake(u2, 10);
+  live.choose(1, 1);
+  live.choose(1, 2);
+  live.choose(2, 3);
+  live.start();
+  assert.equal(live.phase, PHASE.PLAYING);
+  assert.deepEqual([wallet.balances[1], wallet.balances[2]], [80, 90]);
+
+  // Table B: still in registration.
+  const open = manager.joinStake({ id: 3, first_name: 'Cal' }, 20);
+  open.choose(3, 7);
+  assert.equal(wallet.balances[3], 80);
+
+  assert.deepEqual(manager.shutdown().sort(), [live.code, open.code].sort());
+  assert.deepEqual([wallet.balances[1], wallet.balances[2], wallet.balances[3]], [100, 100, 100]);
+  assert.equal(manager.rooms.size, 0);
+  assert.equal(manager.roomOf(1), null);
+  assert.equal(live.timer, null); // nothing left running that would keep calling numbers
+  assert.equal(open.timer, null);
+
+  // A finished round has paid its prize: shutting down afterwards returns nothing more.
+  const w2 = fakeWallet({ 1: 10, 2: 10 });
+  const m2 = new RoomManager({ emit() {}, emitTo() {}, wallet: w2, stakes: [10] });
+  const done = m2.joinStake(u1, 10);
+  m2.joinStake(u2, 10);
+  done.choose(1, 1);
+  done.choose(2, 2);
+  done.finish(done.players.get(1));
+  const paid = { ...w2.balances };
+  m2.shutdown();
+  assert.deepEqual(w2.balances, paid);
+  assert.equal(done.timer, null);
+});

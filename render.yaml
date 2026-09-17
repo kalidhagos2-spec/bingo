@@ -15,6 +15,7 @@ services:
     name: tg-bingo-server
     runtime: docker
     plan: free
+    region: frankfurt # closest Render region to Ethiopia: every tap that needs the server pays this round trip
     dockerfilePath: server/Dockerfile
     dockerContext: server
     healthCheckPath: /api/health
@@ -79,6 +80,7 @@ services:
     name: tg-bingo-bot
     runtime: docker
     plan: free
+    region: frankfurt
     dockerfilePath: bot/Dockerfile
     dockerContext: bot
     healthCheckPath: /

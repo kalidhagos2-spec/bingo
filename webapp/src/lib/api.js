@@ -5,6 +5,14 @@
 // URL pointing at the server, and the server needs that webapp's origin in ALLOWED_ORIGINS.
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
 
+// Last good answer of every GET, kept for the life of the page. Screens paint from it at once
+// (see `cached`) and then replace it with the fresh answer, so moving between screens never
+// waits on the network.
+const lastGet = new Map();
+
+/** The previous answer of `GET path` in this session, or null. */
+export const cached = (path) => lastGet.get(path) ?? null;
+
 /** Fetch wrapper for the backend. Authenticates with Telegram initData when available. */
 export async function api(path, { method = 'GET', body } = {}) {
   const initData = window.Telegram?.WebApp?.initData ?? '';
@@ -16,6 +24,9 @@ export async function api(path, { method = 'GET', body } = {}) {
   const data = await res.json().catch(() => ({}));
   if (res.status === 403 && data.suspended) window.dispatchEvent(new CustomEvent('tgb-suspended', { detail: data.error }));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  // A write (deposit, profile save, purchase…) may change any of the remembered answers.
+  if (method === 'GET') lastGet.set(path, data);
+  else lastGet.clear();
   return data;
 }
 

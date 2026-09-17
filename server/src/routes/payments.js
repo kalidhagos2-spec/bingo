@@ -25,9 +25,10 @@ export const houseAccounts = (config) =>
   METHODS.flatMap((m) => {
     const cfg = config.houseAccounts?.[m.id] ?? {};
     const names = list(cfg.name);
+    // Pair by position first, then drop empty slots, so "…,0960524040" still gets the second name.
     return list(cfg.account)
-      .filter(Boolean)
-      .map((account, i) => ({ method: m.id, label: m.label, account, name: names[i] ?? names[0] ?? '' }));
+      .map((account, i) => ({ method: m.id, label: m.label, account, name: names[i] ?? '' }))
+      .filter((a) => a.account);
   });
 
 const isMethod = (id) => METHODS.some((m) => m.id === id);
@@ -130,8 +131,14 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
   // ---------- deposits by bank transfer + pasted receipt id ----------
 
   router.post('/deposit', json(), async (req, res) => {
-    const { method, amount, txId, account } = req.body ?? {};
+    const { method, amount, txId, account, payerPhone: payerPhoneRaw, payerName } = req.body ?? {};
     const value = Math.round(Number(amount) * 100) / 100;
+    // Optional: the number the player paid from and the name on the receipt, to help the operator match it.
+    let payerPhone = null;
+    if (String(payerPhoneRaw ?? '').trim()) {
+      payerPhone = normalizePhone(payerPhoneRaw);
+      if (!payerPhone) return res.status(400).json({ error: 'The phone you sent from does not look like a phone number, e.g. 0900000000 (or leave it empty)' });
+    }
     // `account` picks which of the rail's house accounts the player paid into (default: the first).
     const rail = houseAccounts(config).filter((a) => a.method === method);
     const house = (account && rail.find((a) => a.account === String(account).trim())) || rail[0];
@@ -141,7 +148,7 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
     }
     let tx;
     try {
-      tx = await store.submitDeposit({ userId: req.user.id, method, amount: value, txId, account: house.account });
+      tx = await store.submitDeposit({ userId: req.user.id, method, amount: value, txId, account: house.account, payerPhone, payerName });
     } catch (err) {
       return res.status(400).json({ error: err.message });
     }

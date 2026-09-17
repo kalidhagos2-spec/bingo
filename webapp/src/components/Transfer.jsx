@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api.js';
+import { api, cached } from '../lib/api.js';
 import { ScreenHeader, BottomNav } from './Nav.jsx';
 
 const QUICK_AMOUNTS = [10, 20, 50, 100];
@@ -8,8 +8,8 @@ const INPUT = 'rounded-xl bg-ink-900 border border-ink-600 px-3 py-2.5 font-bold
 
 /** In-game wallet transfer: send ETB from my wallet to another player, addressed by phone number. */
 export default function Transfer({ onNav, haptic }) {
-  const [wallet, setWallet] = useState(null);
-  const [minAmount, setMinAmount] = useState(5);
+  const [wallet, setWallet] = useState(() => cached('/payments/wallet'));
+  const [minAmount, setMinAmount] = useState(() => cached('/payments/methods')?.p2p?.min ?? 5);
   const [phone, setPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [recipient, setRecipient] = useState(null); // { id, name, phone } once the number is known
@@ -86,7 +86,7 @@ export default function Transfer({ onNav, haptic }) {
         <ScreenHeader onBack={() => onNav('play')} title="💸 Send money" />
         <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pb-1">
 
-        <section className="rounded-2xl bg-gradient-to-br from-sky-400 to-violet-600 p-4 text-ink-950 shadow-lg shadow-black/30">
+        <section className="rounded-2xl bg-gradient-to-br from-blue-500 to-blue-800 p-4 text-ink-950 shadow-lg shadow-black/30">
           <p className="text-[10px] font-black uppercase tracking-wider opacity-80">Available to send</p>
           <p className="text-4xl font-black">
             {wallet ? fmt(wallet.balance) : '—'} <span className="text-lg">{currency}</span>
@@ -122,7 +122,7 @@ export default function Transfer({ onNav, haptic }) {
           </div>
           {error && <p className="text-sm text-rose-400">{error}</p>}
           {notice && <p className="text-sm text-lime-400">{notice}</p>}
-          <button type="submit" disabled={!canSend} className="py-3 rounded-xl bg-gradient-to-r from-sky-400 to-violet-500 text-ink-950 font-black active:scale-95 transition-transform disabled:opacity-50">
+          <button type="submit" disabled={!canSend} className="py-3 rounded-xl bg-gradient-to-r from-blue-500 to-blue-700 text-ink-950 font-black active:scale-95 transition-transform disabled:opacity-50">
             {busy ? 'Sending…' : recipient ? `Send ${value || 0} ${currency} to ${recipient.name}` : `Send ${value || 0} ${currency}`}
           </button>
         </form>

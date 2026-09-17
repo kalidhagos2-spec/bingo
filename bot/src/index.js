@@ -5,7 +5,7 @@ import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import { UserStore } from './users.js';
 import { createPool, migrate } from './db/pool.js';
-import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, prompts } from './signup.js';
+import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, promptFor, nameChoices, md } from './signup.js';
 
 const { BOT_TOKEN, WEBAPP_URL, DATABASE_URL } = process.env;
 const API_URL = (process.env.API_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -67,11 +67,26 @@ async function syncProfile(user) {
 
 // ---------- sign-up flow ----------
 
-/** One step: the name comes from Telegram; the player only shares (or skips) their phone. */
+/** Two steps: the player picks a username (one tap on their Telegram name, or typed), then shares (or skips) their phone. */
 async function beginSignup(ctx, user) {
   const next = begin(user);
   await store.put(next);
-  await askPhone(ctx, prompts.phone(next));
+  await ask(ctx, next, promptFor(next));
+}
+
+/** Sends `text` with the keyboard of the step the user is at. */
+async function ask(ctx, user, text) {
+  if (user.signup?.step === STEP.NAME) return askName(ctx, user, text);
+  if (user.signup?.step === STEP.PHONE) return askPhone(ctx, text);
+  return ctx.reply(text, { parse_mode: 'Markdown', ...Markup.removeKeyboard() });
+}
+
+/** Username step: the Telegram @username and name are offered as one-tap buttons. */
+async function askName(ctx, user, text) {
+  await ctx.reply(text, {
+    parse_mode: 'Markdown',
+    ...Markup.keyboard(nameChoices(user).map((name) => [name])).oneTime().resize(),
+  });
 }
 
 async function askPhone(ctx, text) {
@@ -97,10 +112,7 @@ async function continueSignup(ctx, user, apply) {
     return true;
   }
   await store.put(next);
-  if (reply) {
-    if (next.signup?.step === STEP.PHONE) await askPhone(ctx, reply);
-    else await ctx.reply(reply, { parse_mode: 'Markdown', ...Markup.removeKeyboard() });
-  }
+  if (reply) await ask(ctx, next, reply);
   return true;
 }
 
@@ -112,7 +124,7 @@ bot.start(async (ctx) => {
     await beginSignup(ctx, user);
     return;
   }
-  await ctx.reply(`👋 Welcome back, *${displayName(user)}*!\n\nPress *Play Bingo* to open the game.`, {
+  await ctx.reply(`👋 Welcome back, *${md(displayName(user))}*!\n\nPress *Play Bingo* to open the game.`, {
     parse_mode: 'Markdown',
     ...mainKeyboard(),
   });
@@ -132,9 +144,9 @@ async function showProfile(ctx) {
   }
   await ctx.reply(
     [
-      `👤 *${displayName(user)}*`,
+      `👤 *${md(displayName(user))}*`,
       `ID: \`${user.id}\``,
-      user.username ? `Username: @${user.username}` : null,
+      user.username ? `Telegram: @${md(user.username)}` : null,
       `Phone: ${user.phone ?? '— not added'}`,
       user.signedUpAt ? `Signed up: ${new Date(user.signedUpAt).toLocaleDateString()}` : '⚠️ Sign-up not finished',
     ]

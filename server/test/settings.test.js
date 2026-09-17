@@ -41,12 +41,24 @@ test('validation rejects out-of-range, non-integer and inconsistent values', () 
   assert.deepEqual(validate({ unknown: 1 }, current), {}); // unknown keys are ignored
   assert.equal(SCHEMA.length, 20);
   assert.deepEqual(validate({ boaAccount: ' 1000000000 ' }, current), { boaAccount: '1000000000' });
-  assert.throws(() => validate({ boaName: 'x'.repeat(121) }, current), /at most 120/);
-  // House accounts: several per rail, names must be names, numbers must be numbers.
-  assert.deepEqual(validate({ telebirrAccount: '0937766034, 0960524040', telebirrName: 'Aman,Kalid' }, current), { telebirrAccount: '0937766034, 0960524040', telebirrName: 'Aman,Kalid' });
+  assert.throws(() => validate({ boaName: 'x'.repeat(61) }, current), /at most 60/);
+  // House accounts: one number per slot, names must be names, numbers must be numbers.
+  assert.deepEqual(validate({ telebirrAccount2: ' 0960524040 ', telebirrName2: 'Kalid' }, current), { telebirrAccount2: '0960524040', telebirrName2: 'Kalid' });
   assert.throws(() => validate({ telebirrName: '0937766034' }, current), /account holder's name .* not a number/);
-  assert.throws(() => validate({ telebirrAccount: 'Aman' }, current), /phone or account numbers only/);
-  assert.deepEqual(validate({ cbebirrAccount: '', cbebirrName: '' }, current), { cbebirrAccount: '', cbebirrName: '' }); // clearing a rail is fine
+  assert.throws(() => validate({ telebirrAccount: 'Aman' }, current), /one phone or account number/);
+  assert.throws(() => validate({ telebirrAccount: '0937766034,0960524040' }, current), /one phone or account number/);
+  assert.deepEqual(validate({ telebirrAccount2: '', telebirrName2: '' }, current), { telebirrAccount2: '', telebirrName2: '' }); // clearing a slot is fine
+});
+
+test('the two Telebirr slots map onto the comma-separated house account lists', async (t) => {
+  const { config, settings } = await setup(t);
+  await settings.update({ telebirrAccount: '0937766034', telebirrName: 'Aman', telebirrAccount2: '0960524040', telebirrName2: 'Kalid' });
+  assert.deepEqual(config.houseAccounts.telebirr, { account: '0937766034,0960524040', name: 'Aman,Kalid' });
+  assert.deepEqual([settings.values().telebirrAccount2, settings.values().telebirrName2], ['0960524040', 'Kalid']);
+  await settings.update({ telebirrAccount2: '', telebirrName2: '' }); // drop the second slot
+  assert.deepEqual(config.houseAccounts.telebirr, { account: '0937766034', name: 'Aman' });
+  await settings.update({ telebirrAccount: '', telebirrName: '', telebirrAccount2: '0960524040', telebirrName2: 'Kalid' }); // only slot 2 filled
+  assert.deepEqual(config.houseAccounts.telebirr, { account: ',0960524040', name: ',Kalid' });
 });
 
 test('updates apply live to config, store fees, lobby stakes and existing rooms, and persist', async (t) => {

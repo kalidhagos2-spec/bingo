@@ -11,7 +11,7 @@ export const NAV_ITEMS = [
 /** Header used by every sub-screen: back on the left, title centred, an optional right-hand slot. */
 export function ScreenHeader({ onBack, title, right = null }) {
   return (
-    <header className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-900/75 px-3 py-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.35)] backdrop-blur-sm">
+    <header className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-900/95 px-3 py-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.35)]">
       <button onClick={onBack} className="flex items-center gap-1 text-xs font-bold text-slate-300 transition active:text-white">
         <span className="text-base leading-none">‹</span>
         <span>Back</span>
@@ -25,7 +25,7 @@ export function ScreenHeader({ onBack, title, right = null }) {
 /** Bottom bar: Lobby · Missions · Wallet · Send · Profile. `badges` marks items needing attention. */
 export function BottomNav({ active, onNav, badges = {} }) {
   return (
-    <nav className="mt-auto grid grid-cols-5 gap-1.5 rounded-2xl border border-white/10 bg-slate-900/75 p-2 shadow-[0_12px_30px_rgba(15,23,42,0.3)] backdrop-blur-sm">
+    <nav className="mt-auto grid grid-cols-5 gap-1.5 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-[0_12px_30px_rgba(15,23,42,0.3)]">
       {NAV_ITEMS.map((item) => {
         const badge = badges[item.id];
         const activeItem = item.id === active;

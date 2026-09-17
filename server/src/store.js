@@ -551,22 +551,24 @@ export class PaymentStore {
   }
 
   /** Records a transfer the player says they made; credited by `markPaid` once confirmed. */
-  async submitDeposit({ userId, method, amount, txId, account = null }) {
+  /** `payerPhone` / `payerName` are optional: the number the player sent from and the name on the receipt. */
+  async submitDeposit({ userId, method, amount, txId, account = null, payerPhone = null, payerName = null }) {
     const id = String(txId ?? '').trim().toUpperCase();
     const value = money(amount);
     if (!(value > 0)) throw new Error('Amount must be positive');
     if (!/^[A-Z0-9-]{6,32}$/.test(id)) throw new Error('Enter the transaction / receipt id exactly as shown on the receipt (6–32 letters and digits)');
     if (await this.receiptUsed(method, id)) throw new Error('This transaction id has already been submitted');
     const now = iso();
+    const name = payerName ? String(payerName).trim().slice(0, 60) || null : null;
     const tx = {
       ref: PaymentStore.newRef(), type: 'deposit', userId, method, amount: value, currency: this.currency,
-      status: STATUS.PENDING, providerRef: id, account, note: `Transfer via ${method}, receipt ${id}`,
-      verified: null, checkoutUrl: null, createdAt: now, updatedAt: now,
+      status: STATUS.PENDING, providerRef: id, account, payerPhone: payerPhone || null, payerName: name,
+      note: `Transfer via ${method}, receipt ${id}`, verified: null, checkoutUrl: null, createdAt: now, updatedAt: now,
     };
     await this.pool.query(
-      `INSERT INTO transactions (ref, user_id, type, method, account, amount, currency, status, provider_ref, note, created_at, updated_at)
-       VALUES ($1,$2,'deposit',$3,$4,$5,$6,$7,$8,$9,$10,$10)`,
-      [tx.ref, userId, method, account, value, tx.currency, tx.status, id, tx.note, now],
+      `INSERT INTO transactions (ref, user_id, type, method, account, amount, currency, status, provider_ref, note, payer_phone, payer_name, created_at, updated_at)
+       VALUES ($1,$2,'deposit',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)`,
+      [tx.ref, userId, method, account, value, tx.currency, tx.status, id, tx.note, tx.payerPhone, tx.payerName, now],
     );
     return tx;
   }
@@ -789,6 +791,7 @@ function txFromRow(row) {
     amount: row.amount, currency: row.currency, status: row.status, note: row.note,
     checkoutUrl: row.checkout_url, providerRef: row.provider_ref, fee: row.fee, credited: row.credited,
     payout: row.payout, verified: row.verified, reason: row.reason, autoCheck: row.auto_check,
+    payerPhone: row.payer_phone ?? null, payerName: row.payer_name ?? null,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
   };
 }

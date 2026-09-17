@@ -38,7 +38,10 @@ services:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
     # Public resolvers: the local network's DNS has been dropping lookups, which breaks
     # receipt checks and the bot's Telegram calls (ENOTFOUND) when relayed through Docker.
+    # Docker Desktop's own resolver (the host's DNS) first, public resolvers as a fallback: each has
+    # been unreachable from this network at some point, and the bot cannot start without Telegram.
     dns:
+      - 192.168.65.7
       - 1.1.1.1
       - 8.8.8.8
     depends_on:
@@ -56,7 +59,10 @@ services:
     environment:
       API_URL: http://server:3000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tgbingo
+    # Docker Desktop's own resolver (the host's DNS) first, public resolvers as a fallback: each has
+    # been unreachable from this network at some point, and the bot cannot start without Telegram.
     dns:
+      - 192.168.65.7
       - 1.1.1.1
       - 8.8.8.8
     depends_on:

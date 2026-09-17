@@ -156,6 +156,18 @@ test('transfer moves money between wallets at once and writes both ledger rows',
   assert.equal((await store.transactionsFor(2)).filter((x) => x.type === 'transfer').length, 1);
 });
 
+test('a deposit keeps the optional sender phone and receipt name', async (t) => {
+  const store = await freshStore(t);
+  const tx = await store.submitDeposit({ userId: 1, method: 'telebirr', amount: 40, txId: 'ABCDEF1234', account: '0960524040', payerPhone: '+251911000001', payerName: '  Sara Tesfaye  ' });
+  assert.equal(tx.payerPhone, '+251911000001');
+  assert.equal(tx.payerName, 'Sara Tesfaye');
+  const stored = await store.findByRef(tx.ref);
+  assert.deepEqual([stored.payerPhone, stored.payerName], ['+251911000001', 'Sara Tesfaye']);
+  const bare = await store.submitDeposit({ userId: 1, method: 'telebirr', amount: 40, txId: 'ABCDEF5678', account: '0960524040' });
+  assert.deepEqual([bare.payerPhone, bare.payerName], [null, null]);
+  await store.flush();
+});
+
 test('adminPlayers merges profiles and wallets, with search', async (t) => {
   const store = await freshStore(t);
   await store.setProfile(1, { name: 'Abebe', phone: '+251900000000', email: 'abebe@example.com' });

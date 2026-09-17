@@ -19,15 +19,18 @@ export const SCHEMA = Object.freeze([
   { key: 'countdownMs', group: 'Pacing', label: 'Cartela pick time (ms)', min: 10_000, max: 300_000, step: 1000, scope: 'game' },
   { key: 'callIntervalMs', group: 'Pacing', label: 'Seconds between calls (ms)', min: 1000, max: 30_000, step: 500, scope: 'game' },
   { key: 'restartDelayMs', group: 'Pacing', label: 'Pause before registration re-opens (ms)', min: 3000, max: 60_000, step: 1000, scope: 'game' },
-  { key: 'telebirrAccount', group: 'House accounts', label: 'Telebirr number(s) players transfer to — comma-separated, e.g. 0937766034,0960524040', scope: 'account', method: 'telebirr', field: 'account' },
-  { key: 'telebirrName', group: 'House accounts', label: 'Telebirr account holder name(s), same order — e.g. Aman,Kalid', scope: 'account', method: 'telebirr', field: 'name' },
-  { key: 'cbebirrAccount', group: 'House accounts', label: 'CBE Birr number(s) players transfer to (empty = not offered)', scope: 'account', method: 'cbebirr', field: 'account' },
-  { key: 'cbebirrName', group: 'House accounts', label: 'CBE Birr account holder name(s)', scope: 'account', method: 'cbebirr', field: 'name' },
-  { key: 'boaAccount', group: 'House accounts', label: 'Bank of Abyssinia account number(s) (empty = not offered)', scope: 'account', method: 'boa', field: 'account' },
-  { key: 'boaName', group: 'House accounts', label: 'Bank of Abyssinia account holder name(s)', scope: 'account', method: 'boa', field: 'name' },
+  // Each house-account slot edits one entry of the comma-separated HOUSE_*_ACCOUNT / _NAME lists.
+  { key: 'telebirrAccount', group: 'House accounts', label: 'Telebirr account 1 — phone number players transfer to', scope: 'account', method: 'telebirr', field: 'account', index: 0 },
+  { key: 'telebirrName', group: 'House accounts', label: 'Telebirr account 1 — account holder name', scope: 'account', method: 'telebirr', field: 'name', index: 0 },
+  { key: 'telebirrAccount2', group: 'House accounts', label: 'Telebirr account 2 — phone number (empty = only one account)', scope: 'account', method: 'telebirr', field: 'account', index: 1 },
+  { key: 'telebirrName2', group: 'House accounts', label: 'Telebirr account 2 — account holder name', scope: 'account', method: 'telebirr', field: 'name', index: 1 },
+  { key: 'boaAccount', group: 'House accounts', label: 'Bank of Abyssinia account number (empty = not offered)', scope: 'account', method: 'boa', field: 'account', index: 0 },
+  { key: 'boaName', group: 'House accounts', label: 'Bank of Abyssinia account holder name', scope: 'account', method: 'boa', field: 'name', index: 0 },
 ]);
 
 const num = (v) => (typeof v === 'string' ? Number(v.trim()) : Number(v));
+/** Splits a comma-separated house-account list into its slots. */
+const slots = (text) => String(text ?? '').split(',').map((s) => s.trim());
 
 /** Validates a partial patch against the schema; returns the normalised values or throws. */
 export function validate(patch, current) {
@@ -37,11 +40,11 @@ export function validate(patch, current) {
     const raw = patch[field.key];
     if (field.scope === 'account') {
       const text = String(raw ?? '').trim();
-      if (text.length > 120) throw new Error(`${field.label} must be at most 120 characters`);
-      // A number typed into a name field is the classic mix-up: the deposit cards would then show the number twice.
-      const short = field.label.split(' — ')[0].split(' (')[0];
-      if (field.field === 'name' && text && /^[\d\s,+.-]+$/.test(text)) throw new Error(`${short}: enter the account holder's name (e.g. Aman,Kalid), not a number`);
-      if (field.field === 'account' && text && !text.split(',').every((a) => /^\+?\d{6,15}$/.test(a.trim()))) throw new Error(`${short}: enter phone or account numbers only, comma-separated`);
+      if (text.length > 60) throw new Error(`${field.label} must be at most 60 characters`);
+      // A number typed into a name field is the classic mix-up: the deposit card would then show the number twice.
+      const short = field.label.split(' (')[0];
+      if (field.field === 'name' && text && /^[\d\s,+.-]+$/.test(text)) throw new Error(`${short}: enter the account holder's name (e.g. Aman), not a number`);
+      if (field.field === 'account' && text && !/^\+?\d{6,15}$/.test(text)) throw new Error(`${short}: enter one phone or account number, digits only`);
       next[field.key] = text;
       continue;
     }
@@ -74,10 +77,20 @@ export function createSettings({ config, store, manager = null }) {
     for (const f of SCHEMA) {
       if (f.scope === 'game') out[f.key] = c.game[f.key];
       else if (f.scope === 'stakes') out[f.key] = [...c.stakes];
-      else if (f.scope === 'account') out[f.key] = c.houseAccounts?.[f.method]?.[f.field] ?? '';
+      else if (f.scope === 'account') out[f.key] = slots(c.houseAccounts?.[f.method]?.[f.field])[f.index ?? 0] ?? '';
       else out[f.key] = c[f.key];
     }
     return out;
+  }
+
+  /** Writes one slot of a comma-separated house-account list (trailing empty slots are dropped). */
+  function setSlot(method, field, index, value) {
+    const rail = ((config.houseAccounts ??= {})[method] ??= {});
+    const list = slots(rail[field]);
+    while (list.length <= index) list.push('');
+    list[index] = value;
+    while (list.length && !list[list.length - 1]) list.pop();
+    rail[field] = list.join(',');
   }
 
   /** Pushes values into the live objects everyone reads from. */
@@ -86,7 +99,7 @@ export function createSettings({ config, store, manager = null }) {
       if (!(f.key in values)) continue;
       if (f.scope === 'game') config.game[f.key] = values[f.key];
       else if (f.scope === 'root') config[f.key] = values[f.key];
-      else if (f.scope === 'account') ((config.houseAccounts ??= {})[f.method] ??= {})[f.field] = values[f.key];
+      else if (f.scope === 'account') setSlot(f.method, f.field, f.index ?? 0, values[f.key]);
     }
     if (values.stakes) config.stakes.splice(0, config.stakes.length, ...values.stakes);
     if (manager) {

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api.js';
+import { api, cached } from '../lib/api.js';
 import { ScreenHeader, BottomNav } from './Nav.jsx';
 import { themeFor } from '../lib/themes.js';
 
 /** Coin shop: cartela skins (cosmetic). */
 export default function Shop({ onNav, haptic }) {
-  const [eco, setEco] = useState(null);
+  const [eco, setEco] = useState(() => cached('/economy'));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
 

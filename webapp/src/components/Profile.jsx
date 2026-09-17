@@ -1,24 +1,26 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api.js';
+import { api, cached } from '../lib/api.js';
 import { ScreenHeader, BottomNav } from './Nav.jsx';
 
 const etb = (n) => `${Number(n ?? 0).toFixed(n % 1 ? 2 : 0)} ETB`;
 
 /** Player profile: the fields collected by the bot at sign-up, editable here. */
 export default function Profile({ user, onNav, haptic }) {
-  const [profile, setProfile] = useState(null);
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [profile, setProfile] = useState(() => cached('/profile'));
+  const [name, setName] = useState(() => cached('/profile')?.name ?? '');
+  const [phone, setPhone] = useState(() => cached('/profile')?.phone ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    const painted = Boolean(cached('/profile')); // the form is already filled in: do not type over the player
     api('/profile')
       .then((p) => {
         if (!alive) return;
         setProfile(p);
+        if (painted) return;
         setName(p.name ?? '');
         setPhone(p.phone ?? '');
       })

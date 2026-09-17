@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at    TIMESTAMPTZ NOT NULL,
   updated_at    TIMESTAMPTZ NOT NULL
 );
+-- Optional details a player adds to a transfer+receipt deposit so the operator can match it.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payer_phone TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payer_name TEXT;
 CREATE INDEX IF NOT EXISTS transactions_user_idx ON transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS transactions_type_status_idx ON transactions (type, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS transactions_receipt_idx ON transactions (method, provider_ref) WHERE type = 'deposit';

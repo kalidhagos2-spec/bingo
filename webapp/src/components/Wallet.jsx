@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, openCheckout } from '../lib/api.js';
+import { api, cached, openCheckout } from '../lib/api.js';
 import { ScreenHeader, BottomNav } from './Nav.jsx';
 
 const ICONS = { telebirr: '📱', cbebirr: '🏦', boa: '🏛️', game: '🎱', transfer: '💸' };
@@ -14,6 +14,8 @@ const QUICK_AMOUNTS = [50, 100, 200, 500];
 const POLL_MS = 3000;
 const ACCOUNT_HINT = { telebirr: 'Telebirr phone number', cbebirr: 'CBE Birr phone or account', boa: 'Bank of Abyssinia account number' };
 
+/** Deposit by transfer when house accounts exist, else online checkout, else nothing. */
+const modeOf = (cfg) => (cfg?.transfer?.accounts?.length ? 'transfer' : cfg?.methods?.length ? 'online' : null);
 const fmt = (n) => Number(n ?? 0).toFixed(2);
 const afterFee = (gross, percent) => Math.round((gross - Math.round(gross * percent) / 100) * 100) / 100;
 
@@ -29,20 +31,23 @@ const segment = (active) => `py-2.5 rounded-xl text-sm font-black border ${activ
  * `hint.need` is set when the lobby sent the player here to fund a paid table.
  */
 export default function Wallet({ onNav, hint = null, haptic }) {
-  const [wallet, setWallet] = useState(null);
-  const [config, setConfig] = useState(null);
+  // Painted from the last answers of this session first; the fresh ones replace them below.
+  const [wallet, setWallet] = useState(() => cached('/payments/wallet'));
+  const [config, setConfig] = useState(() => cached('/payments/methods'));
   const [tab, setTab] = useState('deposit'); // deposit | cashout
-  const [mode, setMode] = useState(null); // transfer | online
-  const [method, setMethod] = useState('');
+  const [mode, setMode] = useState(() => modeOf(cached('/payments/methods'))); // transfer | online
+  const [method, setMethod] = useState(() => cached('/payments/methods')?.methods[0]?.id ?? '');
   const [amount, setAmount] = useState(hint?.need ? String(hint.need) : '100');
-  const [txAccount, setTxAccount] = useState(null); // { method, account, name, label } the player paid into
+  const [txAccount, setTxAccount] = useState(() => cached('/payments/methods')?.transfer?.accounts?.[0] ?? null); // { method, account, name, label } the player paid into
   const [txAmount, setTxAmount] = useState(hint?.need ? String(hint.need) : '');
   const [txId, setTxId] = useState('');
+  const [payerPhone, setPayerPhone] = useState(''); // optional: the number the player sent from
+  const [payerName, setPayerName] = useState(''); // optional: the name printed on the receipt
   const [copied, setCopied] = useState('');
-  const [outMethod, setOutMethod] = useState('');
+  const [outMethod, setOutMethod] = useState(() => cached('/payments/methods')?.payoutMethods?.[0]?.id ?? '');
   const [outAmount, setOutAmount] = useState('');
   const [account, setAccount] = useState(''); // Telebirr number the player wants the cash-out sent to (asked every time)
-  const [profilePhone, setProfilePhone] = useState('');
+  const [profilePhone, setProfilePhone] = useState(() => cached('/profile')?.phone ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -62,10 +67,11 @@ export default function Wallet({ onNav, hint = null, haptic }) {
         if (!alive) return;
         setConfig(cfg);
         setWallet(w);
-        setMethod(cfg.methods[0]?.id ?? '');
-        setTxAccount(cfg.transfer?.accounts?.[0] ?? null);
-        setOutMethod(cfg.payoutMethods?.[0]?.id ?? '');
-        setMode(cfg.transfer?.accounts?.length ? 'transfer' : cfg.methods.length ? 'online' : null);
+        setMethod((m) => (cfg.methods.some((x) => x.id === m) ? m : cfg.methods[0]?.id ?? ''));
+        // Keep what the player already picked, unless the operator changed the house accounts meanwhile.
+        setTxAccount((a) => cfg.transfer?.accounts?.find((x) => x.method === a?.method && x.account === a?.account) ?? cfg.transfer?.accounts?.[0] ?? null);
+        setOutMethod((m) => (cfg.payoutMethods?.some((x) => x.id === m) ? m : cfg.payoutMethods?.[0]?.id ?? ''));
+        setMode((m) => m ?? modeOf(cfg));
         if (profile?.phone) setProfilePhone(profile.phone);
       })
       .catch((e) => alive && setError(e.message));
@@ -138,7 +144,7 @@ export default function Wallet({ onNav, hint = null, haptic }) {
     run(async () => {
       const tx = await api('/payments/deposit', {
         method: 'POST',
-        body: { method: txAccount.method, account: txAccount.account, amount: Number(txAmount), txId },
+        body: { method: txAccount.method, account: txAccount.account, amount: Number(txAmount), txId, payerPhone: payerPhone.trim() || undefined, payerName: payerName.trim() || undefined },
       });
       haptic?.('success');
       setNotice(
@@ -254,7 +260,7 @@ export default function Wallet({ onNav, hint = null, haptic }) {
         {tab === 'deposit' && config && mode === null && (
           <div className={`${PANEL} text-center`}>
             <p className="font-black">Deposits open soon</p>
-            <p className="text-xs text-slate-300">Our Telebirr, CBE Birr and Bank of Abyssinia accounts are being set up. Free tables are always open.</p>
+            <p className="text-xs text-slate-300">Our Telebirr accounts are being set up. Check back shortly.</p>
           </div>
         )}
 
@@ -319,8 +325,18 @@ export default function Wallet({ onNav, hint = null, haptic }) {
                 PASTE
               </button>
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-1 text-[11px] text-slate-400">
+                Phone you sent from <span className="text-slate-500">(optional)</span>
+                <input value={payerPhone} onChange={(e) => setPayerPhone(e.target.value)} inputMode="tel" placeholder={profilePhone || '09…'} className={`${INPUT} min-w-0`} aria-label="Phone you sent from" />
+              </label>
+              <label className="flex flex-col gap-1 text-[11px] text-slate-400">
+                Name on the receipt <span className="text-slate-500">(optional)</span>
+                <input value={payerName} onChange={(e) => setPayerName(e.target.value)} maxLength={60} placeholder="Sender name" className={`${INPUT} min-w-0`} aria-label="Name on the receipt" />
+              </label>
+            </div>
             <p className="text-xs text-slate-400">
-              Min {config.min} · Max {config.max} {currency}. Telebirr receipts are checked automatically; others are confirmed by our team.
+              Min {config.min} · Max {config.max} {currency}. Telebirr receipts are checked automatically; others are confirmed by our team. The phone and name help us find your transfer if the id is mistyped.
             </p>
             {feeLine(Number(txAmount) || 0)}
             {messages}

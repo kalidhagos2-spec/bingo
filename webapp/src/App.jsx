@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Game from './components/Game.jsx';
 import Wallet from './components/Wallet.jsx';
 import Profile from './components/Profile.jsx';
@@ -7,7 +7,8 @@ import Shop from './components/Shop.jsx';
 import Transfer from './components/Transfer.jsx';
 import Splash from './components/Splash.jsx';
 
-const SPLASH_MS = 1500;
+// The logo stays up this long at least; the game connects and loads underneath it meanwhile.
+const SPLASH_MS = 900;
 import { useTelegram } from './hooks/useTelegram.js';
 
 const SCREENS = ['play', 'wallet', 'transfer', 'profile', 'missions', 'shop'];
@@ -32,14 +33,18 @@ export default function App() {
     return () => clearTimeout(t);
   }, []);
 
+  // `opts.need` carries the ETB a player is short of when JOIN sends them to deposit.
+  const onNav = useCallback((next, opts = null) => {
+    setWalletHint(opts?.need ? { need: opts.need } : null);
+    setScreen(SCREENS.includes(next) ? next : 'play');
+  }, []);
+
   // The server refuses a suspended player (API 403 / socket handshake); show why instead of the game.
   useEffect(() => {
     const onSuspended = (e) => setSuspended(e.detail || 'Account suspended');
     window.addEventListener('tgb-suspended', onSuspended);
     return () => window.removeEventListener('tgb-suspended', onSuspended);
   }, []);
-
-  if (booting) return <Splash />;
 
   if (suspended) {
     return (
@@ -51,12 +56,25 @@ export default function App() {
     );
   }
 
-  // `opts.need` carries the ETB a player is short of when JOIN sends them to deposit.
-  const onNav = (next, opts = null) => {
-    setWalletHint(opts?.need ? { need: opts.need } : null);
-    setScreen(SCREENS.includes(next) ? next : 'play');
-  };
+  const other = otherScreen(screen, { user, onNav, haptic, walletHint });
+  // The game stays mounted (hidden) behind the other screens: its socket, table and lobby
+  // survive a visit to the wallet, so coming back is instant instead of a reconnect.
+  return (
+    <>
+      {booting && (
+        <div className="fixed inset-0 z-[60]">
+          <Splash />
+        </div>
+      )}
+      <div className={other ? 'hidden' : 'contents'}>
+        <Game user={user} onNav={onNav} haptic={haptic} active={!other} />
+      </div>
+      {other}
+    </>
+  );
+}
 
+function otherScreen(screen, { user, onNav, haptic, walletHint }) {
   switch (screen) {
     case 'wallet':
       return <Wallet onNav={onNav} hint={walletHint} haptic={haptic} />;
@@ -69,6 +87,6 @@ export default function App() {
     case 'profile':
       return <Profile user={user} onNav={onNav} haptic={haptic} />;
     default:
-      return <Game user={user} onNav={onNav} haptic={haptic} />;
+      return null;
   }
 }

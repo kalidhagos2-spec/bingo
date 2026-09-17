@@ -115,6 +115,11 @@ async function shutdown(signal) {
   }, 10_000);
   try {
     verifier.stop();
+    // Tables live only in memory: a round cut short by this restart is void, so its stakes go
+    // back to the players (and they are told) before the sockets close and the writes flush.
+    io.emit('room:closed', { reason: 'The server is restarting. Any stake in an unfinished round was refunded.' });
+    const closed = manager.shutdown();
+    if (closed.length) console.log(`[server] refunded unfinished rounds in: ${closed.join(', ')}`);
     io.close(); // disconnects sockets and stops accepting new ones
     await new Promise((resolve) => httpServer.close(resolve)); // stop accepting new HTTP requests
     await store.flush(); // let any in-flight wallet/profile/settings writes reach Postgres

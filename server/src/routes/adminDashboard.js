@@ -161,7 +161,8 @@ async function loadDeposits() {
   const status = $('#dstatus').value;
   const { deposits } = await api('/api/admin/deposits?status=' + status);
   $('#drows').innerHTML = deposits.length ? deposits.map((d) => '<tr>' +
-    '<td>' + when(d.createdAt) + '</td><td><code>' + d.ref + '</code></td><td>' + d.userId + (d.playerName ? ' <span class="muted">' + esc(d.playerName) + '</span>' : '') + '</td><td>' + d.method + '</td>' +
+    '<td>' + when(d.createdAt) + '</td><td><code>' + d.ref + '</code></td><td>' + d.userId + (d.playerName ? ' <span class="muted">' + esc(d.playerName) + '</span>' : '') +
+      (d.payerPhone || d.payerName ? '<br><span class="muted">sent from ' + esc([d.payerName, d.payerPhone].filter(Boolean).join(' · ')) + '</span>' : '') + '</td><td>' + d.method + '</td>' +
     '<td>' + esc(d.account ?? '') + (d.accountName ? ' <span class="muted">(' + esc(d.accountName) + ')</span>' : '') + '</td>' +
     '<td><code>' + esc(d.providerRef) + '</code>' + (d.method === 'telebirr' ? ' <a href="https://transactioninfo.ethiotelecom.et/receipt/' + encodeURIComponent(d.providerRef) + '" target="_blank" rel="noopener" style="color:var(--aqua)">receipt ↗</a>' : '') + '</td>' +
     '<td class="right"><b>' + money(d.amount) + '</b>' + (d.credited != null ? ' <span class="muted">→ ' + money(d.credited) + '</span>' : '') + '</td>' +

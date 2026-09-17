@@ -17,7 +17,42 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   const emit = (code, event, payload) => {
     io.to(roomChannel(code)).emit(event, payload);
     // Any room change may alter the lobby list (players, countdown, pool), so refresh it for everyone.
-    if (event === 'room:state') io.emit('lobby:rooms', manager.list());
+    if (event === 'room:state') lobbySoon();
+  };
+
+  // The lobby list goes to every connected player. Room changes come in bursts (picks during
+  // registration, several tables at once), so it is sent at most every LOBBY_MS, always with
+  // the latest state, instead of once per change.
+  let lobbyTimer = null;
+  const lobbySoon = () => {
+    lobbyTimer ??= setTimeout(() => {
+      lobbyTimer = null;
+      io.emit('lobby:rooms', manager.list());
+    }, LOBBY_MS).unref();
+  };
+
+  // Mission progress for marks is counted in memory and written in one go: with AUTO on, every
+  // call would otherwise cost one profile write per player, queued ahead of wallet writes.
+  const markCounts = new Map();
+  const flushMarks = () => {
+    for (const [userId, n] of markCounts) store?.trackMission(userId, 'marks', n);
+    markCounts.clear();
+  };
+  if (store) setInterval(flushMarks, MARKS_FLUSH_MS).unref();
+
+  // Marks arrive in bursts (AUTO mode marks for every player on every call). The player who
+  // marked gets an immediate ack; the room-wide state they change (each player's marked
+  // count) is coalesced into one broadcast per second per room instead of one per mark.
+  const pendingBroadcast = new Map();
+  const broadcastSoon = (room) => {
+    if (pendingBroadcast.has(room.code)) return;
+    pendingBroadcast.set(
+      room.code,
+      setTimeout(() => {
+        pendingBroadcast.delete(room.code);
+        if (manager.rooms.get(room.code) === room) room.broadcast();
+      }, 1000),
+    );
   };
 
   // Stakes and prizes move wallet money synchronously; the client is told its new balance.
@@ -162,8 +197,8 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
         const room = inRoom();
         const cartela = payload?.cartela == null ? null : Number(payload.cartela);
         const result = room.mark(user.id, Number(payload?.number), cartela);
-        store?.trackMission(user.id, 'marks', 1);
-        room.broadcast();
+        markCounts.set(user.id, (markCounts.get(user.id) ?? 0) + 1);
+        broadcastSoon(room);
         safeCb(cb, { ok: true, ...result });
       } catch (err) {
         safeCb(cb, { ok: false, error: err.message });
@@ -203,5 +238,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   return { io, manager, kick, closeRoom };
 }
 
+const LOBBY_MS = 500;
+const MARKS_FLUSH_MS = 5000;
 const roomChannel = (code) => `room:${code}`;
 const userChannel = (id) => `user:${id}`;

@@ -92,6 +92,15 @@ export class RoomManager {
     return [...this.rooms.values()].map((r) => r.publicState());
   }
 
+  /** Server shutdown: every unfinished round is void and its stakes are refunded (see `Room.abort`). Returns the tables closed. */
+  shutdown() {
+    const codes = [...this.rooms.keys()];
+    for (const room of this.rooms.values()) room.abort();
+    this.rooms.clear();
+    this.userRoom.clear();
+    return codes;
+  }
+
   /** Operator action: empties and removes a table. Open stakes are refunded by `room.leave`. */
   close(code) {
     const room = this.rooms.get(String(code ?? '').toUpperCase());

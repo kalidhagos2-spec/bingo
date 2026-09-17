@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 /** Thin wrapper around the Telegram WebApp SDK loaded via <script> in index.html. */
 export function useTelegram() {
@@ -14,12 +14,16 @@ export function useTelegram() {
 
   const user = tg?.initDataUnsafe?.user ?? null;
 
-  const haptic = (kind = 'light') => {
-    const h = tg?.HapticFeedback;
-    if (!h) return;
-    if (kind === 'success' || kind === 'error' || kind === 'warning') h.notificationOccurred(kind);
-    else h.impactOccurred(kind);
-  };
+  // Stable identity: screens list it in effect dependencies (the game socket must not reconnect on re-render).
+  const haptic = useCallback(
+    (kind = 'light') => {
+      const h = tg?.HapticFeedback;
+      if (!h) return;
+      if (kind === 'success' || kind === 'error' || kind === 'warning') h.notificationOccurred(kind);
+      else h.impactOccurred(kind);
+    },
+    [tg],
+  );
 
   return { tg, user, haptic, isTelegram: Boolean(tg?.initData) };
 }

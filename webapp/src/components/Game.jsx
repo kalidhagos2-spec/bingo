@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { connectSocket, request } from '../lib/socket.js';
-import { api } from '../lib/api.js';
+import { api, cached } from '../lib/api.js';
 import { themeFor } from '../lib/themes.js';
 import { BottomNav } from './Nav.jsx';
+import Logo from './Logo.jsx';
 import { LETTERS, winningPattern, isCorners } from '../lib/bingo.js';
-import { playMark, playLine, playWin, announceCall, isMuted, setMuted } from '../lib/sound.js';
+import { playMark, playLine, playWin, announceCall, isMuted, getVoice, cycleSound, preloadCalls } from '../lib/sound.js';
 
 /* Column colours as in the reference app: B red, I blue, N green, G amber, O violet. */
-const COL = ['bg-rose-500', 'bg-sky-500', 'bg-emerald-500', 'bg-amber-400', 'bg-violet-500'];
+const COL = ['bg-red-600 text-white', 'bg-blue-600 text-white', 'bg-yellow-400 text-ink-950', 'bg-green-600 text-white', 'bg-purple-600 text-white'];
 const letterIndex = (n) => Math.floor((n - 1) / 15);
 const letterFor = (n) => LETTERS[letterIndex(n)];
 /** 65 -> "01:05" */
@@ -15,10 +16,10 @@ const clock = (seconds) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}
 const etb = (n) => `${Number(n ?? 0).toFixed(n % 1 ? 2 : 0)} ETB`;
 const stakeLabel = (stake) => (stake === 0 ? 'Free Bingo' : `${stake} ETB Bingo`);
 /* Card looks per stake, after the lobby mockup: red, orange, green, purple. */
-const CARD_LOOK = ['from-rose-600 to-red-800', 'from-orange-500 to-rose-700', 'from-emerald-500 to-green-800', 'from-violet-500 to-fuchsia-800'];
+const CARD_LOOK = ['from-red-600 to-red-800', 'from-blue-500 to-blue-800', 'from-green-500 to-green-800', 'from-purple-500 to-purple-800'];
 
 /** Home screen: lobby by stake, cartela pick, live table, win modal. */
-export default function Game({ user, onNav, haptic }) {
+export default function Game({ user, onNav, haptic, active = true }) {
   const onWallet = () => onNav('wallet');
   const onProfile = () => onNav('profile');
   const onShop = () => onNav('shop');
@@ -32,9 +33,11 @@ export default function Game({ user, onNav, haptic }) {
   const [over, setOver] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [joining, setJoining] = useState(null); // stake of the table being joined: the button answers the tap at once
   const [now, setNow] = useState(Date.now());
   const [ready, setReady] = useState(false); // pressed "Start Game" on the pick screen
   const [muted, setMutedState] = useState(isMuted());
+  const [voice, setVoice] = useState(getVoice()); // call-out language: 'am' (recorded Amharic) or 'en'
   // AUTO: called numbers are marked on my cartelas without tapping (remembered per device, on by default).
   const [auto, setAuto] = useState(() => {
     try {
@@ -43,10 +46,10 @@ export default function Game({ user, onNav, haptic }) {
       return true;
     }
   });
-  const [profile, setProfile] = useState(null);
-  const [leaders, setLeaders] = useState([]);
-  const [eco, setEco] = useState(null); // coins, daily bonus, missions, selected skin
-  const [announcements, setAnnouncements] = useState([]);
+  const [profile, setProfile] = useState(() => cached('/profile'));
+  const [leaders, setLeaders] = useState(() => cached('/profile/leaderboard')?.leaders ?? []);
+  const [eco, setEco] = useState(() => cached('/economy')); // coins, daily bonus, missions, selected skin
+  const [announcements, setAnnouncements] = useState(() => cached('/announcements')?.announcements ?? []);
   const [dismissed, setDismissed] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('tgb-dismissed') ?? '[]');
@@ -124,8 +127,10 @@ export default function Game({ user, onNav, haptic }) {
     return () => socket.disconnect();
   }, [haptic]);
 
-  // Profile (sign-up status) and leaderboard for the lobby.
+  // Profile (sign-up status) and leaderboard for the lobby. Refreshed every round and whenever the player
+  // comes back from another screen (the game stays mounted behind them, see App.jsx).
   useEffect(() => {
+    if (!active) return undefined;
     let alive = true;
     api('/profile').then((p) => alive && setProfile(p)).catch(() => {});
     api('/profile/leaderboard').then((r) => alive && setLeaders(r.leaders)).catch(() => {});
@@ -134,7 +139,7 @@ export default function Game({ user, onNav, haptic }) {
     return () => {
       alive = false;
     };
-  }, [room?.round]);
+  }, [room?.round, active]);
 
   // Tick for countdown displays (lobby rows and the pick screen).
   useEffect(() => {
@@ -163,6 +168,13 @@ export default function Game({ user, onNav, haptic }) {
     }
   }, [onNav]);
 
+  const join = async (stake) => {
+    setJoining(stake);
+    haptic?.('light');
+    await act('room:join', { stake });
+    setJoining(null);
+  };
+
   const calledSet = useMemo(() => new Set(room?.called ?? []), [room?.called]);
   // Same rule as the server: a full card when FULL_CARD is on, else a row/column/diagonal or the four corners.
   const cardWins = (c) => (room?.rules?.fullCard ? c.marks.length > 0 && c.marks.every(Boolean) : Boolean(winningPattern(c.marks, room?.rules?.linesToWin ?? 1)));
@@ -171,50 +183,87 @@ export default function Game({ user, onNav, haptic }) {
   const myCartelas = room?.players.find((p) => p.id === myId)?.cartelas ?? [];
   const maxCartelas = room?.rules?.maxCartelas ?? 4;
 
-  /** Marks a called number on every cartela of mine that carries it (the server does the fan-out). */
+  // Refs let the tap handlers stay referentially stable (so memoized cards and grids do not
+  // re-render on every clock tick) while still seeing the latest state.
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const calledRef = useRef(calledSet);
+  calledRef.current = calledSet;
+  const myCartelasRef = useRef(myCartelas);
+  myCartelasRef.current = myCartelas;
+  const sentMarks = useRef(new Set()); // numbers already sent to the server this round
+  const chimed = useRef(false); // the "you can claim" chime plays once per round
+
+  useEffect(() => {
+    sentMarks.current = new Set();
+    chimed.current = false;
+  }, [room?.round, room?.code]);
+
+  /**
+   * Marks `number` at once on every cartela of mine that has it, then tells the server in the
+   * background. The tap never waits for the network: the server's answer only reconciles, and
+   * a refusal puts the cell back.
+   */
   const markNumber = useCallback(
-    async (number) => {
-      const res = await act('game:mark', { number });
-      if (res) {
-        const fresh = new Map((res.cards ?? []).map((c) => [c.cartela, c.marks]));
-        setCards((list) => list?.map((c) => (fresh.has(c.cartela) ? { ...c, marks: fresh.get(c.cartela) } : c)) ?? list);
-        playMark();
-        haptic?.('light');
-        if (res.cards?.some((c) => c.canClaim)) playLine();
-      }
-      return res;
+    (number) => {
+      if (sentMarks.current.has(number)) return;
+      sentMarks.current.add(number);
+      const setMark = (value) =>
+        setCards(
+          (list) =>
+            list?.map((c) => {
+              const i = c.cells.findIndex((cell) => cell.value === number);
+              if (i < 0 || c.marks[i] === value) return c;
+              const marks = c.marks.slice();
+              marks[i] = value;
+              return { ...c, marks };
+            }) ?? list,
+        );
+      setMark(true);
+      playMark();
+      haptic?.('light');
+      request(socketRef.current, 'game:mark', { number })
+        .then((res) => {
+          // The server's marks win, but never undo a newer tap that is still in flight.
+          const fresh = new Map((res.cards ?? []).map((c) => [c.cartela, c.marks]));
+          setCards((list) => list?.map((c) => (fresh.has(c.cartela) ? { ...c, marks: c.marks.map((m, i) => m || fresh.get(c.cartela)[i]) } : c)) ?? list);
+          if (!chimed.current && res.cards?.some((c) => c.canClaim)) {
+            chimed.current = true;
+            playLine();
+          }
+        })
+        .catch((e) => {
+          sentMarks.current.delete(number);
+          setMark(false);
+          setError(e.message);
+          haptic?.('error');
+        });
     },
-    [act, haptic],
+    [haptic],
   );
 
-  /** Tap on cell `index` of my `cardIndex`-th cartela. */
-  const onCell = async (cardIndex, index) => {
-    const card = cards?.[cardIndex];
-    const cell = card?.cells[index];
-    if (!cell || card.marks[index] || room?.phase !== 'playing') return;
-    if (!calledSet.has(cell.value)) {
-      haptic?.('error');
-      setError(`${letterFor(cell.value)}-${cell.value} has not been called yet`);
-      return;
-    }
-    await markNumber(cell.value);
-  };
-
-  // AUTO mode: whenever a called number sits unmarked on one of my cartelas, mark it.
-  useEffect(() => {
-    if (!auto || room?.phase !== 'playing' || !cards?.length) return undefined;
-    const pending = (room.called ?? []).filter((n) => cards.some((c) => c.cells.some((cell, i) => cell.value === n && !c.marks[i])));
-    if (pending.length === 0) return undefined;
-    let cancelled = false;
-    (async () => {
-      for (const n of pending) {
-        if (cancelled) return;
-        await markNumber(n);
+  /** Tap on cell `index` of my `cardIndex`-th cartela. Stable identity: see the refs above. */
+  const onCell = useCallback(
+    (cardIndex, index) => {
+      const card = cardsRef.current?.[cardIndex];
+      const cell = card?.cells[index];
+      if (!cell || cell.value === null || card.marks[index] || roomRef.current?.phase !== 'playing') return;
+      if (!calledRef.current.has(cell.value)) {
+        haptic?.('error');
+        setError(`${letterFor(cell.value)}-${cell.value} has not been called yet`);
+        return;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      markNumber(cell.value);
+    },
+    [markNumber, haptic],
+  );
+
+  // AUTO mode: whenever a called number sits unmarked on one of my cartelas, mark it (all at once, no queue).
+  useEffect(() => {
+    if (!auto || room?.phase !== 'playing' || !cards?.length) return;
+    for (const n of room.called ?? []) {
+      if (!sentMarks.current.has(n) && cards.some((c) => c.cells.some((cell, i) => cell.value === n && !c.marks[i]))) markNumber(n);
+    }
   }, [auto, current, room?.phase, room?.called, cards, markNumber]);
 
   const claim = async () => {
@@ -222,11 +271,42 @@ export default function Game({ user, onNav, haptic }) {
     if (!res) haptic?.('error');
   };
 
-  /** Tap a cartela number on the pick screen: mine → give it back, free → take it. */
-  const choose = async (cartela) => {
-    const res = await act(myCartelas.includes(cartela) ? 'game:release' : 'game:choose', { cartela });
-    if (res) haptic?.('light');
-  };
+  // Cartela picks show instantly: `pendingPicks[n]` is true while taking n, false while giving it back.
+  const [pendingPicks, setPendingPicks] = useState({});
+  const pendingRef = useRef(pendingPicks);
+  pendingRef.current = pendingPicks;
+  const shownCartelas = useMemo(() => {
+    const kept = myCartelas.filter((n) => pendingPicks[n] !== false);
+    const taking = Object.keys(pendingPicks).map(Number).filter((n) => pendingPicks[n] === true && !myCartelas.includes(n));
+    return [...kept, ...taking].sort((a, b) => a - b);
+  }, [myCartelas.join(','), pendingPicks]);
+
+  /** Tap a cartela number on the pick screen: mine → give it back, free → take it. No waiting on the network. */
+  const choose = useCallback(
+    (cartela) => {
+      if (cartela in pendingRef.current) return; // that tap is still on its way
+      const mine = myCartelasRef.current.includes(cartela);
+      setPendingPicks((p) => ({ ...p, [cartela]: !mine }));
+      haptic?.('light');
+      request(socketRef.current, mine ? 'game:release' : 'game:choose', { cartela })
+        .then((res) => {
+          if ('room' in res) setRoom(res.room);
+          if ('card' in res) setCards(res.card?.cards?.length ? res.card.cards : null);
+        })
+        .catch((e) => {
+          if (/^Insufficient balance/.test(e.message)) onNav('wallet', { need: roomRef.current?.stake ?? 0 });
+          else setError(e.message);
+          haptic?.('error');
+        })
+        .finally(() =>
+          setPendingPicks((p) => {
+            const { [cartela]: _done, ...rest } = p;
+            return rest;
+          }),
+        );
+    },
+    [haptic, onNav],
+  );
 
   const refresh = () => (room ? act('room:join', { code: room.code }) : act('room:list').then((r) => r && setLobby(r.rooms)));
 
@@ -239,7 +319,17 @@ export default function Game({ user, onNav, haptic }) {
     setReady(false);
   };
 
-  const toggleMute = () => setMutedState(setMuted());
+  // One button: Amharic → English → muted.
+  const toggleMute = () => {
+    const next = cycleSound();
+    setMutedState(next.muted);
+    setVoice(next.voice);
+  };
+
+  // Sitting down at a table starts fetching the Amharic call-outs, so the first call is not late.
+  useEffect(() => {
+    if (room?.code) preloadCalls();
+  }, [room?.code]);
   const toggleAuto = () => {
     setAuto((v) => {
       try {
@@ -307,12 +397,12 @@ export default function Game({ user, onNav, haptic }) {
               </span>
               <button
                 disabled={!connected || busy}
-                onClick={() => (stake > 0 && (balance ?? 0) < stake ? onNav('wallet', { need: stake }) : act('room:join', { stake }))}
+                onClick={() => (stake > 0 && (balance ?? 0) < stake ? onNav('wallet', { need: stake }) : join(stake))}
                 className={`shrink-0 rounded-xl border-2 px-5 py-2.5 text-lg font-black text-white drop-shadow active:scale-95 disabled:opacity-50 ${
                   stake > 0 && (balance ?? 0) < stake ? 'bg-gradient-to-b from-amber-400 to-orange-600 border-amber-200' : 'bg-gradient-to-b from-lime-400 to-green-600 border-lime-200'
                 }`}
               >
-                {stake > 0 && (balance ?? 0) < stake ? 'DEPOSIT' : 'JOIN'}
+                {joining === stake ? 'JOINING…' : stake > 0 && (balance ?? 0) < stake ? 'DEPOSIT' : 'JOIN'}
               </button>
             </div>
           ))}
@@ -351,7 +441,7 @@ export default function Game({ user, onNav, haptic }) {
   const secondsLeft = room.startsAt ? Math.max(0, Math.ceil((room.startsAt - now) / 1000)) : null;
   const playing = room.phase === 'playing';
   const open = room.phase === 'waiting' || room.phase === 'countdown';
-  const showBoard = playing || room.phase === 'finished' || (open && ready && myCartelas.length > 0);
+  const showBoard = playing || room.phase === "finished" || (open && ready && shownCartelas.length > 0);
 
   if (!showBoard) {
     return (
@@ -360,9 +450,9 @@ export default function Game({ user, onNav, haptic }) {
         <Announcements items={visibleAnnouncements.slice(0, 1)} onDismiss={dismiss} />
         <PickScreen
           room={room}
-          cards={myCartelas.length ? cards : null}
+          cards={shownCartelas.length ? cards : null}
           theme={theme}
-          myCartelas={myCartelas}
+          myCartelas={shownCartelas}
           maxCartelas={maxCartelas}
           myId={myId}
           busy={busy}
@@ -399,7 +489,8 @@ export default function Game({ user, onNav, haptic }) {
                 cells={c.cells}
                 marks={c.marks}
                 called={calledSet}
-                onCell={playing ? (index) => onCell(i, index) : null}
+                cardIndex={i}
+                onCell={playing ? onCell : null}
                 caption={`Cartela ${c.cartela} · ${Math.max(0, c.marks.filter(Boolean).length - 1)}/24`}
                 theme={theme}
               />
@@ -415,7 +506,7 @@ export default function Game({ user, onNav, haptic }) {
           <div className="flex flex-col gap-2 min-w-0">
             <div className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2 flex items-center justify-between">
               <span className="text-[11px] font-black tracking-widest text-slate-300">CALL</span>
-              <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[6rem] text-center rounded-xl px-4 py-1.5 text-2xl font-black text-ink-950 shadow-lg animate-pop`} aria-live="polite">
+              <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[6rem] text-center rounded-xl px-4 py-1.5 text-2xl font-black shadow-lg animate-pop`} aria-live="polite">
                 {current ? `${letterFor(current)}-${current}` : '—'}
               </span>
             </div>
@@ -425,7 +516,7 @@ export default function Game({ user, onNav, haptic }) {
                   .slice(-6, -1)
                   .reverse()
                   .map((n) => (
-                    <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black text-ink-950 opacity-80`}>
+                    <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black opacity-80`}>
                       {letterFor(n)}-{n}
                     </span>
                   ))}
@@ -439,7 +530,8 @@ export default function Game({ user, onNav, haptic }) {
                     cells={c.cells}
                     marks={c.marks}
                     called={calledSet}
-                    onCell={playing ? (index) => onCell(i, index) : null}
+                    cardIndex={i}
+                    onCell={playing ? onCell : null}
                     caption={`Cartela ${c.cartela} · ${Math.max(0, c.marks.filter(Boolean).length - 1)}/24`}
                     theme={theme}
                   />
@@ -471,8 +563,9 @@ export default function Game({ user, onNav, haptic }) {
         >
           🎯 BINGO!
         </button>
-        <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} className={`w-11 rounded-xl border text-base active:scale-95 ${muted ? 'bg-ink-800 border-ink-600 text-slate-400' : 'bg-rose-500/20 border-rose-500/50'}`}>
-          {muted ? '🔇' : '🔊'}
+        <button onClick={toggleMute} aria-label={muted ? 'Sound off. Tap for Amharic call-outs' : voice === 'am' ? 'Amharic call-outs. Tap for English' : 'English call-outs. Tap to mute'} className={`w-11 flex flex-col items-center justify-center gap-0.5 leading-none rounded-xl border text-base active:scale-95 ${muted ? 'bg-ink-800 border-ink-600 text-slate-400' : 'bg-rose-500/20 border-rose-500/50'}`}>
+          <span>{muted ? '🔇' : '🔊'}</span>
+          {!muted && <span className="text-[9px] font-black">{voice === 'am' ? 'አማ' : 'EN'}</span>}
         </button>
         <button
           onClick={toggleAuto}
@@ -545,24 +638,23 @@ function Announcements({ items, onDismiss }) {
 /** Lobby header: paper-plane logo lockup after the mockup. */
 function Banner({ connected }) {
   return (
-    <header className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-sky-500/20 via-indigo-700/70 to-slate-900/95 px-4 py-4 text-center shadow-[0_18px_40px_rgba(15,23,42,0.4)]">
-      <span className={`absolute right-3 top-3 h-2.5 w-2.5 rounded-full ${connected ? 'bg-lime-400' : 'bg-rose-500'} shadow-[0_0_16px_rgba(255,255,255,0.35)]`} title={connected ? 'Connected' : 'Disconnected'} />
+    <header className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-red-600/25 via-ink-800 to-ink-900 px-4 py-3 text-center shadow-[0_18px_40px_rgba(3,11,42,0.5)]">
+      <span className={`absolute right-3 top-3 h-2.5 w-2.5 rounded-full ${connected ? 'bg-lime-400' : 'bg-red-500'} shadow-[0_0_16px_rgba(255,255,255,0.35)]`} title={connected ? 'Connected' : 'Disconnected'} />
       <div className="absolute inset-x-8 top-0 h-16 rounded-b-full bg-white/5 blur-2xl" />
-      <p className="relative text-xs font-black uppercase tracking-[0.35em] text-sky-200/80">Telegram</p>
-      <p className="relative mt-2 text-4xl font-black tracking-[0.12em] text-amber-300">BINGO</p>
+      <Logo size="md" className="relative" />
     </header>
   );
 }
 
 function TopBar({ onBack, backLabel = 'Back', title, connected }) {
   return (
-    <header className="w-full flex items-center justify-between rounded-2xl border border-white/10 bg-slate-900/75 px-3 py-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.35)] backdrop-blur-sm">
+    <header className="w-full flex items-center justify-between rounded-2xl border border-white/10 bg-slate-900/95 px-3 py-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.35)]">
       <button onClick={onBack} className="flex items-center gap-1 text-xs font-bold text-slate-300 active:text-white">
         <span className="text-base leading-none">‹</span>
         <span>{backLabel}</span>
       </button>
       <h1 className="text-sm font-black tracking-[0.06em] text-slate-100 uppercase">
-        <span className="text-aqua-300">TG</span> Bingo
+        <span className="text-red-400">USA</span> <span className="text-aqua-400">Bingo</span>
         {title ? <span className="ml-2 text-[10px] font-bold tracking-wide text-slate-400">{title}</span> : null}
       </h1>
       <span className={`h-2.5 w-2.5 rounded-full ${connected ? 'bg-lime-400' : 'bg-rose-500'}`} title={connected ? 'Connected' : 'Disconnected'} />
@@ -592,7 +684,10 @@ function Stat({ label, value }) {
 
 /** Pick screen: red timer, 10-column cartela grid with owners, previews of my cartelas, actions. */
 function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, secondsLeft, onChoose, onLeave, onRefresh, onStart, error }) {
-  const taken = new Map(room.players.flatMap((p) => (p.cartelas ?? []).map((n) => [n, p])));
+  // Rebuilt only when picks change, so the memoized grid below skips the twice-a-second clock ticks.
+  const takenKey = room.players.map((p) => `${p.id}:${p.name}:${(p.cartelas ?? []).join(".")}`).join("|");
+  const taken = useMemo(() => new Map(room.players.flatMap((p) => (p.cartelas ?? []).map((n) => [n, p]))), [takenKey]);
+  const mine = useMemo(() => new Set(myCartelas), [myCartelas.join(",")]);
   const count = room.rules.cartelaCount;
   const atMax = myCartelas.length >= maxCartelas;
   return (
@@ -616,31 +711,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
         </p>
       </div>
 
-      <div className="grid grid-cols-10 gap-1 max-h-[34vh] overflow-y-auto shrink-0 rounded-xl border border-ink-600/60 p-1">
-        {Array.from({ length: count }, (_, i) => i + 1).map((n) => {
-          const owner = taken.get(n);
-          const mine = myCartelas.includes(n);
-          const locked = Boolean(owner) && owner.id !== myId;
-          let look = 'bg-ink-700 border-ink-600 text-slate-100 active:scale-90';
-          if (mine) look = 'bg-lime-400 border-lime-300 text-ink-950';
-          else if (locked) look = 'bg-rose-700 border-rose-600 text-white';
-          else if (atMax) look = 'bg-ink-800 border-ink-700 text-slate-500';
-          return (
-            <button
-              key={n}
-              type="button"
-              disabled={busy || locked || (atMax && !mine)}
-              onClick={() => onChoose(n)}
-              title={locked ? `Taken by ${owner.name}` : mine ? `Give back cartela ${n}` : `Cartela ${n}`}
-              aria-pressed={mine}
-              className={`h-9 rounded-md border flex flex-col items-center justify-center leading-none ${look}`}
-            >
-              <span className="text-[11px] font-black">{n}</span>
-              {locked && <span className="text-[7px] font-bold truncate max-w-full px-0.5">{owner.name.split(' ')[0].slice(0, 6)}</span>}
-            </button>
-          );
-        })}
-      </div>
+      <CartelaGrid count={count} taken={taken} mine={mine} myId={myId} atMax={atMax} onChoose={onChoose} />
 
       <div className="flex gap-2 overflow-x-auto shrink-0 pb-1">
         {cards?.length ? (
@@ -696,7 +767,7 @@ function CallStrip({ current, called }) {
   return (
     <div className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2 flex items-center gap-2 shrink-0">
       <span className="text-[11px] font-black tracking-widest text-slate-300">CALL</span>
-      <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[5.5rem] text-center rounded-xl px-3 py-1 text-2xl font-black text-ink-950 shadow-lg animate-pop`} aria-live="polite">
+      <span key={current} className={`${current ? COL[letterIndex(current)] : 'bg-ink-700'} min-w-[5.5rem] text-center rounded-xl px-3 py-1 text-2xl font-black shadow-lg animate-pop`} aria-live="polite">
         {current ? `${letterFor(current)}-${current}` : '—'}
       </span>
       <span className="flex-1 flex flex-wrap justify-end gap-1" aria-label="Previous calls">
@@ -704,7 +775,7 @@ function CallStrip({ current, called }) {
           .slice(-6, -1)
           .reverse()
           .map((n) => (
-            <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black text-ink-950 opacity-80`}>
+            <span key={n} className={`${COL[letterIndex(n)]} rounded-md px-1.5 py-0.5 text-[11px] font-black opacity-80`}>
               {letterFor(n)}-{n}
             </span>
           ))}
@@ -717,21 +788,20 @@ function CallStrip({ current, called }) {
 /** Fills the empty fourth slot when a player holds three cartelas. */
 function LogoTile() {
   return (
-    <div className="rounded-2xl border border-ink-600/60 bg-ink-800/70 flex flex-col items-center justify-center gap-1 min-h-32">
-      <span className="flex h-14 w-14 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-rose-500 via-amber-400 to-emerald-500 text-2xl font-black text-ink-950 shadow-lg">B</span>
-      <span className="text-[10px] font-black tracking-[0.3em] text-amber-300">BINGO</span>
+    <div className="rounded-2xl border border-ink-600/60 bg-ink-800/70 flex items-center justify-center min-h-32 p-2">
+      <Logo size="sm" />
     </div>
   );
 }
 
 /** The 75-number master board: called numbers red, the latest one green. */
-function CalledBoard({ called, current }) {
+function CalledBoardView({ called, current }) {
   // Fills the height it is given: 15 equal rows, so the numbers grow with the screen.
   return (
     <div className="h-full min-h-0 flex flex-col rounded-2xl bg-ink-800 border border-ink-600/60 p-1.5">
       <div className="grid grid-cols-5 gap-1 mb-1 shrink-0">
         {LETTERS.map((l, i) => (
-          <span key={l} className={`${COL[i]} rounded-md text-center text-xs font-black text-ink-950 py-0.5`}>
+          <span key={l} className={`${COL[i]} rounded-md text-center text-xs font-black py-0.5`}>
             {l}
           </span>
         ))}
@@ -746,7 +816,7 @@ function CalledBoard({ called, current }) {
               <span
                 key={n}
                 className={`min-h-5 rounded text-sm font-bold flex items-center justify-center ${
-                  latest ? 'bg-lime-400 text-ink-950 animate-pop' : hit ? 'bg-rose-600 text-white' : 'bg-ink-700 text-slate-300'
+                  latest ? 'bg-lime-400 text-ink-950 animate-pop' : hit ? 'bg-red-600 text-white' : 'bg-ink-700 text-slate-300'
                 }`}
               >
                 {n}
@@ -763,13 +833,13 @@ function CalledBoard({ called, current }) {
  * A cartela: coloured B I N G O header, marked numbers green, centre X. Numbers that
  * have been called but not marked yet get a glowing ring so the player can spot them.
  */
-function Card({ cells, marks, onCell, caption, highlight = new Set(), called = new Set(), theme = themeFor('classic'), compact = false }) {
+function CardView({ cells, marks, onCell, cardIndex = 0, caption, highlight = EMPTY, called = EMPTY, theme = themeFor("classic"), compact = false }) {
   const gap = compact ? 'gap-0.5' : 'gap-1';
   return (
     <div className={`rounded-2xl border ${compact ? 'p-1' : 'p-1.5'} ${theme.frame}`}>
       <div className={`grid grid-cols-5 ${gap} mb-0.5`}>
         {LETTERS.map((l, i) => (
-          <span key={l} className={`${theme.cols[i]} rounded-md text-center ${compact ? 'text-[9px]' : 'text-xs'} font-black text-ink-950 py-0.5`}>
+          <span key={l} className={`${theme.cols[i]} rounded-md text-center ${compact ? 'text-[9px]' : 'text-xs'} font-black py-0.5`}>
             {l}
           </span>
         ))}
@@ -790,7 +860,7 @@ function Card({ cells, marks, onCell, caption, highlight = new Set(), called = n
               key={cell.index}
               type={onCell ? 'button' : undefined}
               disabled={onCell ? free || marked : undefined}
-              onClick={onCell ? () => onCell(cell.index) : undefined}
+              onClick={onCell ? () => onCell(cardIndex, cell.index) : undefined}
               aria-pressed={onCell ? marked : undefined}
               className={`aspect-square rounded-md ${compact ? 'text-[10px]' : 'text-base'} font-black flex items-center justify-center select-none ${look} ${onCell && !free && !marked ? 'active:scale-90' : ''}`}
             >
@@ -806,7 +876,7 @@ function Card({ cells, marks, onCell, caption, highlight = new Set(), called = n
 
 function Overlay({ children }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink-950/80 backdrop-blur-sm px-8 animate-fade-in">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-ink-950/80 px-8 animate-fade-in">
       <div className="w-full max-w-xs text-center">{children}</div>
     </div>
   );
@@ -817,7 +887,7 @@ function WinModal({ over, myId, onAgain, onLeave }) {
   const iWon = Boolean(w) && w.id === myId;
   const line = new Set(w?.line ?? []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 backdrop-blur-sm px-6 animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 px-6 animate-fade-in">
       <div role="dialog" aria-modal="true" className="w-full max-w-xs rounded-3xl bg-ink-800 border border-aqua-400/40 p-5 text-center shadow-2xl animate-modal-in">
         <h2 className="text-lg font-black text-amber-300 mb-3">{w ? `${w.name} won!! 🎉` : 'No winner this round 😶'}</h2>
         {w && (
@@ -843,3 +913,44 @@ function WinModal({ over, myId, onAgain, onLeave }) {
     </div>
   );
 }
+
+/* ---------- memoized heavy pieces ----------
+ * The game screen re-renders twice a second for its countdowns. These three are the expensive
+ * parts (400 cartela buttons, 75 board cells, up to 4 × 25 card cells); with stable props they
+ * now re-render only when their own data changes, which keeps taps instant. */
+
+const EMPTY = new Set();
+
+/** The 10-column grid of numbered cartelas on the pick screen. */
+const CartelaGrid = memo(function CartelaGrid({ count, taken, mine, myId, atMax, onChoose }) {
+  return (
+    <div className="grid grid-cols-10 gap-1 max-h-[34vh] overflow-y-auto shrink-0 rounded-xl border border-ink-600/60 p-1">
+      {Array.from({ length: count }, (_, i) => i + 1).map((n) => {
+        const owner = taken.get(n);
+        const isMine = mine.has(n);
+        const locked = Boolean(owner) && owner.id !== myId;
+        let look = 'bg-ink-700 border-ink-600 text-slate-100 active:scale-90';
+        if (isMine) look = 'bg-lime-400 border-lime-300 text-ink-950';
+        else if (locked) look = 'bg-rose-700 border-rose-600 text-white';
+        else if (atMax) look = 'bg-ink-800 border-ink-700 text-slate-500';
+        return (
+          <button
+            key={n}
+            type="button"
+            disabled={locked || (atMax && !isMine)}
+            onClick={() => onChoose(n)}
+            title={locked ? `Taken by ${owner.name}` : isMine ? `Give back cartela ${n}` : `Cartela ${n}`}
+            aria-pressed={isMine}
+            className={`h-9 rounded-md border flex flex-col items-center justify-center leading-none ${look}`}
+          >
+            <span className="text-[11px] font-black">{n}</span>
+            {locked && <span className="text-[7px] font-bold truncate max-w-full px-0.5">{owner.name.split(' ')[0].slice(0, 6)}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
+const Card = memo(CardView);
+const CalledBoard = memo(CalledBoardView);

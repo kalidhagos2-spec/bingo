@@ -1,4 +1,10 @@
-# Telegram Bingo Mini App
+# USA Bingo — Telegram Mini App
+
+Brand: the **USA Bingo** logo (stars-and-stripes "USA", gold "BINGO", five lettered
+balls). Drop the artwork at `webapp/public/logo.png` and the app uses it on the splash
+screen, the lobby banner and the card-grid tile; without the file a CSS version of the
+same lockup is rendered. Colours: flag navy surfaces, flag red alerts, gold highlights,
+and the ball colours for the B I N G O columns (red, blue, yellow, green, purple).
 
 A production-style project that brings classic Bingo to Telegram using
 [Telegram Mini Apps](https://core.telegram.org/bots/webapps). Users register via a
@@ -43,9 +49,10 @@ tg-bingo/
 
 **Bot**
 - `/start` registers the user by Telegram ID and, the first time, walks them through a
-  one-step **sign-up**: the display name is taken from their Telegram name (editable
-  later on the Profile screen) and they share their phone number (Telegram *share
-  contact* button, typed number, or *Skip for now*). The phone is what deposits,
+  two-step **sign-up**: first their **username** (their Telegram @username and name are
+  offered as one-tap buttons, or they type their own; editable later on the Profile
+  screen), then their **phone number** (Telegram *share contact* button, typed number,
+  or *Skip for now*). The phone is what deposits,
   cash-outs and player-to-player transfers are matched on. The flow is a small state
   machine in `bot/src/signup.js` (unit-tested with `npm test`).
 - The collected fields are pushed to the game server (`POST /api/profile/sync`, signed
@@ -67,7 +74,15 @@ tg-bingo/
   `POST /api/economy/missions/:id/claim`, `POST /api/economy/shop/:id/buy`,
   `POST /api/economy/theme/:theme`. There is no daily bonus card any more.
 - **Loading screen.** The Mini App opens on a branded splash (logo, bingo ball, spinner)
-  for about 1.5 s while the Telegram SDK and the first data settle.
+  for about a second while the game connects underneath it.
+- **Call-outs in Amharic.** Every called number is spoken in Amharic, letter first
+  ("ቢ፣ አስራ ሁለት" for B-12), from 75 recorded clips in `webapp/public/audio/am/` (about
+  0.8 MB, fetched in the background when a player sits down, then cached for a month).
+  Clips rather than the phone's speech engine, because most phones have no Amharic voice.
+  The 🔊 button on the table cycles **አማ → EN → mute**; EN uses the phone's English
+  speech, which is also the fallback if a clip cannot be played. To change the voice
+  (female `am-ET-MekdesNeural` by default, male `am-ET-AmehaNeural`), speed or wording:
+  `uv run --no-project --with edge-tts python webapp/scripts/make_amharic_audio.py --voice …`.
 - **Sign-in.** Players are identified by Telegram `initData` (verified against
   `BOT_TOKEN` on every API call and socket handshake). There is no separate login: the
   game is played from inside Telegram. Outside Telegram only dev mode (`DEV_ALLOW_ANON`)
@@ -229,13 +244,17 @@ API: `GET /api/payments/methods`, `GET /api/payments/wallet`,
 ### Deposit by transfer + pasted receipt id
 
 This is the default way to fund a wallet and works the way most Ethiopian bingo apps do:
-the wallet's **Deposit** tab shows a **Bank accounts** grid of the house's Telebirr /
-CBE Birr / Bank of Abyssinia accounts, each card with the account name, number and a
-**COPY** button (`HOUSE_*_ACCOUNT` / `HOUSE_*_NAME`, comma-separated for several accounts
-per rail, also editable in the dashboard *Settings → House accounts*). The player copies
+the wallet's **Deposit** tab shows a **Bank accounts** grid of the house's Telebirr
+accounts (up to two, plus Bank of Abyssinia if configured), each card with the account
+name, number and a **COPY** button (`HOUSE_*_ACCOUNT` / `HOUSE_*_NAME`, comma-separated
+lists; the dashboard *Settings → House accounts* edits them as "Telebirr account 1 / 2"
+number and holder-name fields). The player copies
 a number, transfers the amount, then pastes the **transaction id** from the receipt (a
 **PASTE** button reads the clipboard). `POST /api/payments/deposit {method, account,
-amount, txId}` records it as a pending deposit; an id can confirm one deposit only.
+amount, txId, payerPhone?, payerName?}` records it as a pending deposit; an id can confirm
+one deposit only. The optional phone the player sent from and the name on the receipt are
+stored with the deposit and shown under the player in the admin Deposits tab, so a
+transfer with a mistyped id can still be matched by hand.
 Telebirr receipts are checked against Ethio Telecom's public receipt page at submit time
 and then re-checked every `RECEIPT_RECHECK_MS` (default 3 min) for `RECEIPT_RECHECK_HOURS`
 (default 24 h), so a receipt that is published a little later still credits the wallet
@@ -266,8 +285,8 @@ appears alongside only when a gateway is configured.
 ### Cash-out (withdrawals)
 
 - Players request a payout from the wallet screen: amount (`MIN_WITHDRAW`–`MAX_WITHDRAW`,
-  default 50–5000 ETB), payout method (Telebirr, CBE Birr, Bank of Abyssinia) and the
-  phone or account number. The amount is **held** from the wallet at once so it cannot
+  default 50–5000 ETB) and the Telebirr phone number to pay out to (`PAYOUT_METHOD`
+  limits the rail; Telebirr by default). The amount is **held** from the wallet at once so it cannot
   be staked twice; `WITHDRAW_FEE_PERCENT` (default 2 %) is kept by the house on payout.
 - Requests wait in an operator queue: `GET /api/admin/withdrawals?status=pending`, then
   `POST /api/admin/withdrawals/:ref/approve {providerRef}` after paying the player through
