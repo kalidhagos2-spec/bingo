@@ -563,3 +563,10 @@ test('the board is blank when registration re-opens: last round\'s numbers are n
   assert.equal(room.publicState().callIndex, 0);
   manager.shutdown();
 });
+
+test('manager: a table that refuses the player it was opened for is not left behind', () => {
+  const manager = new RoomManager({ emit() {}, emitTo() {}, rules: { maxPlayers: 0 } }); // a broken setting
+  assert.throws(() => manager.joinStake(u1, 0), /full/i);
+  assert.throws(() => manager.joinStake(u2, 0), /full/i);
+  assert.equal(manager.rooms.size, 0);
+});

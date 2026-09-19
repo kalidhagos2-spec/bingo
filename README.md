@@ -103,6 +103,12 @@ tg-bingo/
   stores the balls in calling order (`rounds.called`) and the winning numbers (`winner.numbers`);
   **Admin → Games** shows them with the call each came out on, and the win screen shows players
   the winning numbers and the call the game ended on.
+- **The game ends on the ball that won it.** When a ball completes a winning pattern on any cartela
+  in play, the caller holds the next ball for `CLAIM_WINDOW_MS` (6 s) longer, as a hall caller
+  does, so the BINGO is pressed before another ball comes out. A late BINGO is still paid; the
+  round record names the true winning ball (`winner.ball`, `winner.ballCall`) and Admin → Games
+  shows whether it was the last ball. `webapp/scripts/e2e-two-players.mjs` plays a paid round
+  between two players against a dev server and prints the money and the winning ball.
 - **A blank board between rounds.** The previous round's numbers are cleared when registration
   re-opens, so the board behind the countdown never looks like the draw to come. (The draw
   order exists only on the server and is never sent to phones.)

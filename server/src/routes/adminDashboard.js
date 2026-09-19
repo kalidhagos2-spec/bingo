@@ -245,6 +245,7 @@ function winProof(r) {
   return '<p style="margin:6px 4px"><b>' + esc(r.winner.name) + '</b> · cartela ' + r.winner.cartela + ' · ' + (r.winner.full ? 'full card' : 'winning numbers') + ': ' +
     r.winner.numbers.map((n) => '<code>' + LETTER(n) + '</code> <span class="muted">(call ' + (at(n) || '?') + ')</span>').join(' · ') +
     ' · ' + (all ? '<span class="paid">all called ✔</span>' : '<span class="rejected">NOT ALL CALLED</span>') +
+    (r.winner.ball ? ' · winning ball <b>' + LETTER(r.winner.ball) + '</b> on call ' + r.winner.ballCall + (r.called.length > r.winner.ballCall ? ' <span class="pending">(BINGO pressed ' + (r.called.length - r.winner.ballCall) + ' ball(s) later)</span>' : ' <span class="paid">= last ball ✔</span>') : '') +
     '<br><span class="muted">Balls in order (' + r.called.length + '): ' + r.called.map(LETTER).join(' ') + '</span></p>';
 }
 

@@ -92,13 +92,17 @@ export const config = {
 
   /** Multiplayer room rules; see game/room.js DEFAULT_RULES for defaults. */
   game: {
-    minPlayers: num('MIN_PLAYERS', 2),
-    maxPlayers: num('MAX_PLAYERS', 8),
+    // A table nobody can sit at (MAX_PLAYERS=0) or that can never start is a misconfiguration,
+    // not a setting: fall back to the defaults rather than take the whole game down.
+    minPlayers: num('MIN_PLAYERS', 2) >= 1 ? Math.floor(num('MIN_PLAYERS', 2)) : 2,
+    maxPlayers: num('MAX_PLAYERS', 8) >= 2 ? Math.floor(num('MAX_PLAYERS', 8)) : 8,
     fullCard: bool('FULL_CARD', false),
     linesToWin: num('LINES_TO_WIN', 1),
     callIntervalMs: num('CALL_INTERVAL_MS', 4000),
     countdownMs: num('COUNTDOWN_MS', 40000),
     restartDelayMs: num('RESTART_DELAY_MS', 8000),
+    /** Extra wait before the next ball when the last one completed someone's winning pattern. */
+    claimWindowMs: num('CLAIM_WINDOW_MS', 6000),
     cartelaCount: num('CARTELA_COUNT', 400),
     /** Cartelas one player may hold per round (each pays the stake). */
     maxCartelas: num('MAX_CARTELAS', 4),

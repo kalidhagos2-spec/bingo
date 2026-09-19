@@ -16,6 +16,10 @@ export const DEFAULT_RULES = Object.freeze({
   callIntervalMs: 4000,
   countdownMs: 40000, // time players get to pick cartelas
   restartDelayMs: 8000,
+  // When a ball completes a winning pattern on a cartela in play, the caller holds the next ball
+  // this much longer, as a hall caller does when someone is about to shout: the game then ends
+  // on the ball that won it, not on the one after. Nobody claims? The calling goes on.
+  claimWindowMs: 6000,
   cartelaCount: CARTELA_COUNT,
   maxCartelas: 4, // cartelas one player may hold in a round; each one pays the stake
   houseCutPercent: 20, // share of every stake kept by the house; the rest is the prize pool
@@ -249,7 +253,26 @@ export class Room {
     }
     this.called.push(number);
     this.emit('game:number', { number, letter: letterFor(number), index: this.called.length, called: this.called });
-    this.setTimer(() => this.callNext(), this.rules.callIntervalMs);
+    const wait = this.rules.callIntervalMs + (this.completesACard(number) ? this.rules.claimWindowMs : 0);
+    this.setTimer(() => this.callNext(), wait);
+  }
+
+  /** True when `number`, the ball just called, completes a winning pattern on some cartela in play (whatever its holder has marked so far). */
+  completesACard(number) {
+    const called = new Set(this.called);
+    const wins = (marks) => (this.rules.fullCard ? marks.every(Boolean) : Boolean(winningPattern(marks, this.rules.linesToWin)));
+    for (const p of this.players.values()) {
+      for (const card of p.cards) {
+        const cell = card.cells.find((c) => c.value === number);
+        if (!cell) continue;
+        const now = card.cells.map((c) => c.value === null || called.has(c.value));
+        if (!wins(now)) continue;
+        const before = now.slice();
+        before[cell.index] = false;
+        if (!wins(before)) return true; // this very ball made it
+      }
+    }
+    return false;
   }
 
   playerInRound(userId) {
@@ -324,7 +347,7 @@ export class Room {
     this.clearTimer();
     this.phase = PHASE.FINISHED;
     if (player) {
-      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks, numbers: winningNumbers(card, line, full), call: this.called.length };
+      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks, numbers: winningNumbers(card, line, full), call: this.called.length, ...this.winningBall(winningNumbers(card, line, full)) };
       if (this.pool > 0) this.wallet?.credit(player.id, this.pool, `Prize for room ${this.code}`);
       // A demo player's win costs the real players nothing: their stakes for this round go back.
       // That includes a real player who left or lost their connection before the end.
@@ -348,7 +371,7 @@ export class Room {
       participants,
       players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p), ...(p.left ? { left: true } : {}) })),
       winnerId: player?.id ?? null,
-      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, numbers: winningNumbers(card, line, full), ...(demoWin ? { demo: true } : {}) } : null,
+      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, numbers: winningNumbers(card, line, full), ...this.winningBall(winningNumbers(card, line, full)), ...(demoWin ? { demo: true } : {}) } : null,
       called: [...this.called], // the balls in the order they came out: the proof of the win
       prize: player ? this.pool : 0,
       stake: this.stake,
@@ -365,6 +388,12 @@ export class Room {
     this.emit('game:over', { winner: this.winner, called: this.called, round: this.round, pool: this.pool });
     this.broadcast();
     this.setTimer(() => this.reopen(), this.rules.restartDelayMs);
+  }
+
+  /** The ball that completed the win: the last of `numbers` to be called, and the call it came out on. */
+  winningBall(numbers) {
+    const ballCall = Math.max(0, ...numbers.map((n) => this.called.indexOf(n) + 1));
+    return ballCall ? { ball: this.called[ballCall - 1], ballCall } : {};
   }
 
   /** Registration re-opens; everyone picks (and pays) again for the next round. */

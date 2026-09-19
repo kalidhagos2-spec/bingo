@@ -4,13 +4,14 @@ export const DEFAULT_STAKES = Object.freeze([0, 10, 20, 50]);
 
 /** Owns all rooms, one lobby entry per stake, and knows which room each user is in. */
 export class RoomManager {
-  constructor({ emit, emitTo, rules = {}, stakes = DEFAULT_STAKES, wallet = null, stats = null, isDemo = () => false }) {
+  constructor({ emit, emitTo, rules = {}, stakes = DEFAULT_STAKES, wallet = null, stats = null, isDemo = () => false, now = undefined, timers = undefined }) {
     this.emit = emit; // (code, event, payload)
     this.emitTo = emitTo; // (userId, event, payload)
     this.rules = rules;
     this.stakes = [...stakes];
     this.wallet = wallet;
     this.isDemo = isDemo;
+    this.clock = { ...(now ? { now } : {}), ...(timers ? { timers } : {}) }; // injectable for tests
     this.roundStats = stats; // { recordRound } for player statistics
     this.rooms = new Map();
     this.userRoom = new Map(); // userId -> code
@@ -27,6 +28,7 @@ export class RoomManager {
       wallet: this.wallet,
       stats: this.roundStats,
       isDemo: this.isDemo,
+      ...this.clock,
       emit: (event, payload) => this.emit(code, event, payload),
       emitTo: this.emitTo,
     });
@@ -49,7 +51,16 @@ export class RoomManager {
     if (!room) throw new Error('Room not found');
     if (this.userRoom.get(user.id) === room.code) return room;
     this.leave(user.id);
-    room.join(user);
+    try {
+      room.join(user);
+    } catch (err) {
+      // Never leave behind a table that was opened for this player and then refused them.
+      if (room.size === 0) {
+        room.destroy();
+        this.rooms.delete(room.code);
+      }
+      throw err;
+    }
     this.userRoom.set(user.id, room.code);
     return room;
   }

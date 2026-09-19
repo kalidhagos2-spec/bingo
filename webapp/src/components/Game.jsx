@@ -920,7 +920,7 @@ function WinModal({ over, myId, onAgain, onLeave }) {
             </p>
             {w.numbers?.length > 0 && !w.full && (
               <p className="mt-1 text-xs text-slate-300">
-                {t('win.numbers', { numbers: w.numbers.map((n) => `${letterFor(n)}-${n}`).join(' · '), call: w.call ?? over.called.length })}
+                {t('win.numbers', { numbers: w.numbers.map((n) => `${letterFor(n)}-${n}`).join(' · '), ball: w.ball ? `${letterFor(w.ball)}-${w.ball}` : '', call: w.ballCall ?? w.call ?? over.called.length })}
               </p>
             )}
             {iWon && <p className="text-sm text-lime-400 font-bold">{t('win.you')}</p>}
