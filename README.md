@@ -75,6 +75,32 @@ tg-bingo/
   `POST /api/economy/theme/:theme`. There is no daily bonus card any more.
 - **Loading screen.** The Mini App opens on a branded splash (logo, bingo ball, spinner)
   for about a second while the game connects underneath it.
+- **Demo players** (`DEMO_BOTS=6`, 0 = off; `server/src/demoBots.js`). House bots with random
+  names and play-money wallets (`DEMO_BOTS_MIN_BALANCE`–`DEMO_BOTS_MAX_BALANCE` ETB, topped up
+  when low) that sit at the public tables and play like people: they join real players who
+  are waiting first, pick 1–3 cartelas a few seconds apart, mark called numbers after a
+  human-like delay, call BINGO, and stay or wander off between rounds. At most
+  `DEMO_BOTS_PER_ROOM` per table, and half of them stay free for real players. They have
+  negative ids, so they can never log in, deposit or cash out, and they carry a **DEMO** tag in
+  the operator dashboard. **A real player never loses money to one:** when a demo player wins a
+  paid round, the real players' stakes for that round are refunded. A real player can win the
+  pool demo players paid into; the house pays that difference (booked as a negative house
+  take), so keep the number low, or 0, once real money is live.
+  Table size: `DEMO_BOTS_PER_ROOM=30` fills every table to 30 players in all (real players count
+  towards it; set `MAX_PLAYERS` a few above, e.g. 34, so real players always find a seat). There is
+  one demo table per stake, and one table's worth of demo players stays free to fill a table a
+  real player opens, so `DEMO_BOTS` should be about (stakes + 1) × table size, e.g. 120.
+  Names are Ethiopian given names in Latin or Ge'ez script, many with an emoji (`randomName`).
+  `DEMO_BOTS_SHARE=0.9` makes demo players hold about nine cartelas for each one a real player
+  holds at the same table, so they win about nine rounds in ten there. It works only through
+  how many cartelas they buy: the draw, the marks and the BINGO check are never touched.
+  In **Admin → Games** every round shows *Stakes* (stake × every cartela in the pool, with the
+  demo share underneath), *Prize* (stakes less the house cut) and *House* (real money only). A
+  player who leaves mid-round forfeits the stake but stays in the round's record ("left
+  mid-round"), and is refunded like everyone else if a demo player, or nobody, wins.
+- **A blank board between rounds.** The previous round's numbers are cleared when registration
+  re-opens, so the board behind the countdown never looks like the draw to come. (The draw
+  order exists only on the server and is never sent to phones.)
 - **Call-outs in Amharic.** Every called number is spoken in Amharic, letter first
   ("ቢ፣ አስራ ሁለት" for B-12), from 75 recorded clips in `webapp/public/audio/am/` (about
   0.8 MB, fetched in the background when a player sits down, then cached for a month).
@@ -331,7 +357,12 @@ expires or is removed (`GET/POST /api/admin/announcements`,
 Endpoints: `GET /api/admin/summary`, `GET /api/admin/house`, `GET /api/admin/rounds?q=&limit=`, `GET /api/admin/withdrawals`,
 `POST /api/admin/withdrawals/:ref/approve|reject`, `GET /api/admin/players?q=`,
 `GET /api/admin/players/:id/transactions`, `POST /api/admin/players/:id/suspend {reason, days}`,
-`POST /api/admin/players/:id/unsuspend` — all with header `x-admin-token`.
+`POST /api/admin/players/:id/unsuspend`, `POST /api/admin/players/:id/adjust {amount, reason}` — all with
+header `x-admin-token`. **Adjust balance** (Players tab) credits (+) or debits (−) a wallet by hand for
+refunds, goodwill credits and clawbacks: a reason is required and shown in the player's wallet
+history, a debit can never take the balance below zero, one adjustment is limited to 50,000, and
+every one is written to the player's ledger (type `adjustment`) and to the house ledger as an audit
+row (the house fee balance itself is not changed).
   Automatic payouts (Telebirr B2C / Chapa transfers) can be wired into the approve step
   once merchant credentials for disbursements are available.
 
