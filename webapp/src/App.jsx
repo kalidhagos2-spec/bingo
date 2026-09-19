@@ -10,6 +10,7 @@ import Splash from './components/Splash.jsx';
 // The logo stays up this long at least; the game connects and loads underneath it meanwhile.
 const SPLASH_MS = 900;
 import { useTelegram } from './hooks/useTelegram.js';
+import { useT, tError } from './lib/i18n.js';
 
 const SCREENS = ['play', 'wallet', 'transfer', 'profile', 'missions', 'shop'];
 
@@ -22,6 +23,7 @@ function requestedScreen() {
 
 export default function App() {
   const { user, haptic } = useTelegram();
+  const t = useT();
   const [screen, setScreen] = useState(requestedScreen);
   const [suspended, setSuspended] = useState('');
   const [walletHint, setWalletHint] = useState(null);
@@ -29,8 +31,8 @@ export default function App() {
 
   // Branded loading screen while the Telegram SDK and the first data settle.
   useEffect(() => {
-    const t = setTimeout(() => setBooting(false), SPLASH_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setBooting(false), SPLASH_MS);
+    return () => clearTimeout(timer);
   }, []);
 
   // `opts.need` carries the ETB a player is short of when JOIN sends them to deposit.
@@ -50,8 +52,8 @@ export default function App() {
     return (
       <main className="min-h-full flex flex-col items-center justify-center gap-4 px-6 py-10 text-center bg-ink-900 text-slate-100">
         <span className="text-6xl">⛔</span>
-        <h1 className="text-xl font-black">{suspended}</h1>
-        <p className="text-sm text-slate-300 max-w-xs">Your wallet balance is kept. Contact support through the bot if you think this is a mistake.</p>
+        <h1 className="text-xl font-black">{tError(suspended)}</h1>
+        <p className="text-sm text-slate-300 max-w-xs">{t('app.suspendedHelp')}</p>
       </main>
     );
   }
