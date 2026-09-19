@@ -25,6 +25,9 @@ export function connectSocket() {
     path: '/socket.io',
     auth: initData ? { initData } : { devId: devId() },
     transports: ['websocket', 'polling'],
+    // Only the polling fallback can carry headers; the websocket is let through by ngrok as it is.
+    extraHeaders: { 'ngrok-skip-browser-warning': '1' },
+    transportOptions: { polling: { extraHeaders: { 'ngrok-skip-browser-warning': '1' } } },
   });
 }
 

@@ -68,7 +68,7 @@ function fetchClip(n) {
   if (!clips.has(n)) {
     clips.set(
       n,
-      fetch(`/audio/am/${n}.mp3`)
+      fetch(`/audio/am/${n}.mp3`, { headers: { 'ngrok-skip-browser-warning': '1' } })
         .then((r) => (r.ok ? r.arrayBuffer() : null))
         .catch(() => {
           clips.delete(n); // offline blip: try again next time

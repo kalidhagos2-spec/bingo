@@ -123,7 +123,7 @@ let token = localStorage.getItem('tgb-admin-token') ?? '';
 let timer = null;
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-admin-token': token, ...(opts.headers ?? {}) } });
+  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-admin-token': token, 'ngrok-skip-browser-warning': '1', ...(opts.headers ?? {}) } });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? ('HTTP ' + res.status));
   return data;

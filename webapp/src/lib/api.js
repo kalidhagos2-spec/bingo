@@ -16,7 +16,9 @@ export const cached = (path) => lastGet.get(path) ?? null;
 /** Fetch wrapper for the backend. Authenticates with Telegram initData when available. */
 export async function api(path, { method = 'GET', body } = {}) {
   const initData = window.Telegram?.WebApp?.initData ?? '';
-  const headers = { accept: 'application/json' };
+  // ngrok's free plan answers a browser with a warning page instead of our JSON unless this
+  // header is present (harmless everywhere else). The page itself cannot send it: see README.
+  const headers = { accept: 'application/json', 'ngrok-skip-browser-warning': '1' };
   if (initData) headers.authorization = `tma ${initData}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
 
