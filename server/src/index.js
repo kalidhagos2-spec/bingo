@@ -13,6 +13,7 @@ import { adminRouter } from './routes/admin.js';
 import { createSettings } from './settings.js';
 import { createAnnouncements } from './announcements.js';
 import { attachRealtime } from './realtime.js';
+import { createDemoBots, isDemoId } from './demoBots.js';
 import { createDepositVerifier } from './verifier.js';
 import { createTelebirrPayout } from './payouts/telebirr.js';
 
@@ -49,14 +50,18 @@ app.set('trust proxy', true);
 if (config.allowedOrigins.length) app.use('/api', cors({ origin: config.allowedOrigins }));
 
 const httpServer = createServer(app);
-const { io, manager, kick, closeRoom } = attachRealtime(httpServer, {
+const { io, manager, kick, closeRoom, broadcastSoon } = attachRealtime(httpServer, {
   botToken: config.botToken,
   devAllowAnon: config.devAllowAnon,
   rules: config.game,
   stakes: config.stakes,
   store,
   allowedOrigins: config.allowedOrigins,
+  isDemo: isDemoId,
 });
+
+// Demo players (DEMO_BOTS > 0): house bots that sit at the public tables and play like people.
+const demoBots = await createDemoBots({ manager, store, stakes: config.stakes, ...config.demoBots, onChange: broadcastSoon }).start();
 
 app.get('/api/health', async (_req, res) => {
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM transactions');
@@ -91,7 +96,7 @@ if (!config.autoApproveDeposits) verifier.start();
 console.log(`[verifier] Telebirr receipts re-checked every ${Math.round(config.receiptRecheckMs / 1000)}s for ${config.receiptRecheckHours}h`);
 const payout = createTelebirrPayout(config.telebirr);
 console.log(`[payouts] Telebirr disbursement gateway: ${payout.available ? 'configured' : 'not configured (cash-outs paid by hand, confirmed by receipt id)'}`);
-app.use('/api/admin', adminRouter({ config, store, manager, kick, closeRoom, settings, announcements, verifier, payout }));
+app.use('/api/admin', adminRouter({ config, store, manager, notifyBalance: (userId, balance) => io.to(`user:${userId}`).emit('wallet:balance', { balance }), kick, closeRoom, settings, announcements, verifier, payout }));
 
 app.use((err, _req, res, _next) => {
   console.error('[server] unhandled error:', err);
@@ -115,6 +120,7 @@ async function shutdown(signal) {
   }, 10_000);
   try {
     verifier.stop();
+    demoBots.stop();
     // Tables live only in memory: a round cut short by this restart is void, so its stakes go
     // back to the players (and they are told) before the sockets close and the writes flush.
     io.emit('room:closed', { reason: 'The server is restarting. Any stake in an unfinished round was refunded.' });

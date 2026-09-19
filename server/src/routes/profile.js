@@ -1,4 +1,5 @@
 import { Router, json } from 'express';
+import { houseAccounts } from './payments.js';
 
 const NAME_MIN = 2;
 const NAME_MAX = 32;
@@ -67,6 +68,25 @@ export function profileRouter({ config, store, auth }) {
       clean({ name, phone: phone ? (normalizePhone(phone) ?? undefined) : phone, email: email ? normalizeEmail(email) ?? undefined : email, username, firstName, lastName, signedUpAt }),
     );
     res.json(profileView({ id: userId, first_name: firstName, last_name: lastName, username }, profile));
+  });
+
+  /**
+   * What the bot's help commands show (/balance, /deposit, /withdraw): the player's wallet and
+   * the current house accounts, limits and fees. Same shared-secret check as /sync.
+   */
+  router.get('/bot/:id', (req, res) => {
+    const token = req.get('x-bot-token') ?? '';
+    const allowed = config.botToken ? token === config.botToken : config.devAllowAnon;
+    if (!allowed) return res.status(401).json({ error: 'Bad bot token' });
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'id required' });
+    res.json({
+      balance: store.balance(userId),
+      currency: config.currency,
+      deposit: { min: config.minTopup, max: config.maxTopup, feePercent: config.depositFeePercent, accounts: houseAccounts(config) },
+      withdraw: { min: config.minWithdraw, max: config.maxWithdraw, feePercent: config.withdrawFeePercent },
+      game: { stakes: config.stakes, maxCartelas: config.game.maxCartelas, cartelaCount: config.game.cartelaCount, maxPrize: config.game.maxPrize, countdownMs: config.game.countdownMs },
+    });
   });
 
   router.get('/leaderboard', (_req, res) => {

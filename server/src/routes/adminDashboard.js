@@ -100,7 +100,7 @@ export function dashboardPage({ currency, payout = null, gateway = false }) {
     <section id="tab-games" style="display:none">
       <h2>Game history <span><input id="gq" placeholder="search room code, player id or name" style="width:260px"> <span class="muted" id="gcount"></span></span></h2>
       <p class="muted" style="margin:0 0 8px">Click a round to see every player's cartela and marks.</p>
-      <table><thead><tr><th>Finished</th><th>Room</th><th>#</th><th class="right">Stake</th><th class="right">Players</th><th>Winner</th><th>Result</th><th class="right">Prize</th><th class="right">House</th><th class="right">Calls</th><th class="right">Length</th></tr></thead><tbody id="grows"></tbody></table>
+      <table><thead><tr><th>Finished</th><th>Room</th><th>#</th><th class="right">Stake</th><th class="right">Players</th><th>Winner</th><th>Result</th><th class="right" title="Everything staked on the round: stake x cartelas. The prize is this less the house cut.">Stakes</th><th class="right">Prize</th><th class="right" title="Real money only: what real players staked minus what a real winner was paid. Demo players stake play money, and a demo win refunds the real players.">House</th><th class="right">Calls</th><th class="right">Length</th></tr></thead><tbody id="grows"></tbody></table>
     </section>
     <section id="tab-house" style="display:none">
       <h2>House ledger <span class="muted" id="houseTotals"></span></h2>
@@ -117,6 +117,8 @@ const $ = (s) => document.querySelector(s);
 const money = (n) => (Number(n ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + CUR;
 const when = (iso) => iso ? new Date(iso).toLocaleString() : '';
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Demo players (house bots, negative ids; see demoBots.js) are always marked for the operator.
+const demoTag = (id) => (Number(id) <= -1000 ? ' <span class="pending" title="House demo player: play money, cannot deposit or cash out">DEMO</span>' : '');
 let token = localStorage.getItem('tgb-admin-token') ?? '';
 let timer = null;
 
@@ -176,7 +178,7 @@ async function loadHouse() {
   $('#houseTotals').textContent = 'balance ' + money(h.balance) + ' · stakes ' + money(h.stakesCollected) + ' · prizes ' + money(h.prizesPaid) + ' · deposits ' + money(h.depositsReceived);
   $('#hrows').innerHTML = h.entries.length ? h.entries.map((e) => '<tr>' +
     '<td>' + when(e.at) + '</td><td>' + (e.type ?? 'round') + '</td>' +
-    '<td>' + (e.type === 'deposit' || e.type === 'withdraw' ? 'player ' + e.userId + ' · ' + e.method + ' · <code>' + e.ref + '</code>' : 'room ' + e.room + ' · round ' + e.round + ' · ' + e.players + ' × ' + money(e.stake)) + '</td>' +
+    '<td>' + (e.type === 'adjustment' ? 'player ' + e.userId + ' · wallet adjusted by the operator' : e.type === 'deposit' || e.type === 'withdraw' ? 'player ' + e.userId + ' · ' + e.method + ' · <code>' + e.ref + '</code>' : 'room ' + e.room + ' · round ' + e.round + ' · ' + e.players + ' × ' + money(e.stake)) + '</td>' +
     '<td class="right">' + money(e.stakes ?? e.amount) + '</td><td class="right">' + (e.prize != null ? money(e.prize) : '') + '</td><td class="right"><b>' + money(e.fee) + '</b></td></tr>').join('')
     : '<tr><td colspan="6" class="muted">No fees collected yet.</td></tr>';
 }
@@ -186,12 +188,12 @@ async function loadPlayers() {
   const { players, total } = await api('/api/admin/players?q=' + encodeURIComponent(q));
   $('#pcount').textContent = total + ' player' + (total === 1 ? '' : 's');
   $('#prows').innerHTML = players.length ? players.map((p) => '<tr class="prow" data-player="' + p.id + '" style="cursor:pointer">' +
-    '<td>' + p.id + '</td><td>' + (p.name ?? '') + '</td><td>' + (p.username ? '@' + p.username : '') + '</td><td>' + (p.phone ?? '') + '</td><td>' + (p.email ?? '') + '</td>' +
+    '<td>' + p.id + '</td><td>' + (p.name ?? '') + demoTag(p.id) + '</td><td>' + (p.username ? '@' + p.username : '') + '</td><td>' + (p.phone ?? '') + '</td><td>' + (p.email ?? '') + '</td>' +
     '<td>' + (p.signedUpAt ? new Date(p.signedUpAt).toLocaleDateString() : '<span class="muted">not finished</span>') + '</td>' +
     '<td class="right"><b>' + money(p.balance) + '</b></td><td class="right">' + p.coins + '</td><td class="right">' + p.stats.games + '</td><td class="right">' + p.stats.wins + '</td><td class="right">' + money(p.stats.winnings) + '</td>' +
     '<td class="muted">' + when(p.lastActivity) + '</td>' +
     '<td>' + (p.suspended ? '<span class="rejected" title="' + esc(p.suspended.reason) + '">' + (p.suspended.until ? 'suspended until ' + new Date(p.suspended.until).toLocaleDateString() : 'banned') + '</span>' : '<span class="paid">active</span>') + '</td>' +
-    '<td>' + (p.suspended ? '<button class="btn ok" data-unsuspend="' + p.id + '">Reinstate</button>' : '<button class="btn bad" data-suspend="' + p.id + '">Suspend</button>') + '</td></tr>').join('')
+    '<td>' + (p.suspended ? '<button class="btn ok" data-unsuspend="' + p.id + '">Reinstate</button>' : '<button class="btn bad" data-suspend="' + p.id + '">Suspend</button>') + (p.id > 0 ? ' <button class="btn" data-adjust="' + p.id + '" data-name="' + esc(p.name ?? '') + '" data-balance="' + p.balance + '">Adjust balance</button>' : '') + '</td></tr>').join('')
     : '<tr><td colspan="14" class="muted">No players match.</td></tr>';
 }
 
@@ -214,11 +216,12 @@ async function loadGames() {
   $('#grows').innerHTML = rounds.length ? rounds.map((r, i) => '<tr class="grow" data-round="' + i + '" style="cursor:pointer">' +
     '<td>' + when(r.at) + '</td><td><code>' + esc(r.room) + '</code></td><td>' + r.round + '</td><td class="right">' + (r.stake ? money(r.stake) : 'free') + '</td>' +
     '<td class="right">' + r.players.length + '</td>' +
-    '<td>' + (r.winner ? esc(r.winner.name) + ' <span class="muted">#' + r.winner.cartela + '</span>' : '<span class="muted">nobody</span>') + '</td>' +
+    '<td>' + (r.winner ? esc(r.winner.name) + demoTag(r.winner.id) + ' <span class="muted">#' + r.winner.cartela + '</span>' : '<span class="muted">nobody</span>') + '</td>' +
     '<td>' + (r.winner ? (r.winner.full ? '<span class="paid">full card</span>' : 'line') : '<span class="rejected">75 numbers, refunded</span>') + '</td>' +
+    '<td class="right">' + (r.stake ? money(r.stakes) + (r.demoStakes ? '<br><span class="muted">demo ' + money(r.demoStakes) + '</span>' : '') : '') + '</td>' +
     '<td class="right">' + (r.stake ? money(r.prize) : (r.freeCoins ? r.freeCoins + ' coins' : '')) + '</td><td class="right"><b>' + money(r.houseTake) + '</b></td>' +
     '<td class="right">' + (r.numbersCalled ?? '') + '</td><td class="right">' + mins(r.durationMs) + '</td></tr>').join('')
-    : '<tr><td colspan="11" class="muted">No rounds yet.</td></tr>';
+    : '<tr><td colspan="12" class="muted">No rounds yet.</td></tr>';
   loadGames.rounds = rounds;
 }
 
@@ -227,8 +230,8 @@ function toggleRound(row) {
   if (next && next.classList.contains('ledger')) return next.remove();
   const r = loadGames.rounds[Number(row.dataset.round)];
   const tr = document.createElement('tr'); tr.className = 'ledger';
-  tr.innerHTML = '<td colspan="11" style="white-space:normal;background:#0a1a5c"><table>' + r.players.map((p) =>
-    '<tr><td>' + p.id + '</td><td>' + esc(p.name) + (r.winner && r.winner.id === p.id ? ' 🏆' : '') + '</td><td>cartela ' + (p.cartela ?? '?') + '</td><td>' + (p.marked ?? '?') + '/24 marked</td></tr>').join('') + '</table></td>';
+  tr.innerHTML = '<td colspan="12" style="white-space:normal;background:#0a1a5c"><table>' + r.players.map((p) =>
+    '<tr><td>' + p.id + '</td><td>' + esc(p.name) + demoTag(p.id) + (r.winner && r.winner.id === p.id ? ' 🏆' : '') + (p.left ? ' <span class="rejected">left mid-round</span>' : '') + '</td><td>cartela ' + ((p.cartelas && p.cartelas.length ? p.cartelas.join(', ') : p.cartela) ?? '?') + '</td><td>' + (p.marked ?? '?') + '/24 marked</td></tr>').join('') + '</table></td>';
   row.after(tr);
 }
 
@@ -254,7 +257,7 @@ function toggleRoom(row) {
   const r = loadRooms.rooms[Number(row.dataset.room)];
   const tr = document.createElement('tr'); tr.className = 'ledger';
   tr.innerHTML = '<td colspan="11" style="white-space:normal;background:#0a1a5c">' + (r.players.length ? '<table>' + r.players.map((p) =>
-    '<tr><td>' + p.id + '</td><td>' + esc(p.name) + '</td><td>' + (p.cartela ? 'cartela ' + p.cartela : '<span class="muted">not picked</span>') + '</td><td>' + (p.playing ? p.marked + '/24 marked' : p.cartela ? '<span class="pending">ready for the next round</span>' : '<span class="muted">watching</span>') + '</td></tr>').join('') + '</table>' : '<span class="muted">Empty.</span>') + '</td>';
+    '<tr><td>' + p.id + '</td><td>' + esc(p.name) + demoTag(p.id) + '</td><td>' + (p.cartela ? 'cartela ' + p.cartela : '<span class="muted">not picked</span>') + '</td><td>' + (p.playing ? p.marked + '/24 marked' : p.cartela ? '<span class="pending">ready for the next round</span>' : '<span class="muted">watching</span>') + '</td></tr>').join('') + '</table>' : '<span class="muted">Empty.</span>') + '</td>';
   row.after(tr);
 }
 
@@ -379,6 +382,22 @@ document.addEventListener('click', async (e) => {
     if (reason === null) return;
     try { await api('/api/admin/deposits/' + t.dataset.dreject + '/reject', { method: 'POST', body: JSON.stringify({ reason }) }); toast('Deposit rejected'); refreshAll(); }
     catch (err) { toast(err.message, true); }
+    return;
+  }
+  if (t.dataset.adjust) {
+    const who = (t.dataset.name || 'player') + ' (' + t.dataset.adjust + ')';
+    const raw = prompt('Adjust the wallet of ' + who + '. Balance now: ' + money(t.dataset.balance) + '\n\nAmount in ' + CUR + ': 30 adds 30, -30 takes 30 back.');
+    if (raw === null) return;
+    const amount = Number(String(raw).replace(',', '.').trim());
+    if (!Number.isFinite(amount) || amount === 0) return toast('Enter a number other than 0', true);
+    const reason = prompt('Reason (the player sees it in their wallet history):', amount > 0 ? 'Refund' : 'Correction');
+    if (reason === null) return;
+    if (!confirm((amount > 0 ? 'ADD ' : 'TAKE ') + money(Math.abs(amount)) + (amount > 0 ? ' to ' : ' from ') + who + '?\nNew balance: ' + money(Number(t.dataset.balance) + amount) + '\nReason: ' + reason)) return;
+    try {
+      const r = await api('/api/admin/players/' + t.dataset.adjust + '/adjust', { method: 'POST', body: JSON.stringify({ amount, reason }) });
+      toast('Wallet adjusted · new balance ' + money(r.balance));
+      refreshAll();
+    } catch (err) { toast(err.message, true); }
     return;
   }
   if (t.dataset.remove) {

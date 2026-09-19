@@ -7,7 +7,7 @@ import { RoomManager } from './game/manager.js';
  * initData (handshake.auth.initData). Users are identified by Telegram id, so a
  * reconnecting player is re-attached to their room and card.
  */
-export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stakes, store = null, allowedOrigins = [] }) {
+export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stakes, store = null, allowedOrigins = [], isDemo = () => false }) {
   // origin:false (default) keeps this same-origin only, matching the docker-compose setup
   // where nginx reverse-proxies /socket.io to this server. Set ALLOWED_ORIGINS when the
   // webapp is deployed on a different origin (e.g. Vercel) than this server.
@@ -69,7 +69,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   };
 
   const stats = store && { recordRound: (round) => store.recordRound({ ...round, freeCoins: rules?.freeBingoCoins ?? 50 }) };
-  const manager = new RoomManager({ emit, emitTo, rules, stakes, wallet, stats });
+  const manager = new RoomManager({ emit, emitTo, rules, stakes, wallet, stats, isDemo });
 
   // Players appear under the display name they chose at sign-up (if the profile has one).
   const withProfileName = (user) => {
@@ -235,7 +235,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
     return closed;
   };
 
-  return { io, manager, kick, closeRoom };
+  return { io, manager, kick, closeRoom, broadcastSoon };
 }
 
 const LOBBY_MS = 500;

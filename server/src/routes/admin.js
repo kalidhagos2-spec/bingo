@@ -14,7 +14,10 @@ function decorate(config, store, rows) {
   return rows.map((t) => ({ ...t, playerName: store.profile(t.userId)?.name ?? null, accountName: names.get(t.account) ?? null }));
 }
 
-export function adminRouter({ config, store, manager = null, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null }) {
+/** Largest single manual wallet adjustment, a guard against a slipped zero. */
+const MAX_ADJUST = 50_000;
+
+export function adminRouter({ config, store, manager = null, notifyBalance = () => {}, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null }) {
   const router = Router();
 
   // The page itself is public; every data call from it carries the admin token.
@@ -65,6 +68,27 @@ export function adminRouter({ config, store, manager = null, kick = () => {}, cl
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
     res.json({ id, lifted: store.unsuspend(id) });
+  });
+
+  /**
+   * Credits (+) or debits (-) a player's wallet by hand, with a reason that is kept in the
+   * player's ledger and the house ledger. For refunds after a fault, goodwill credits and
+   * clawbacks; deposits and cash-outs have their own, receipt-checked flows.
+   */
+  router.post('/players/:id/adjust', json(), (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Bad id (demo players hold play money: nothing to adjust)' });
+    if (!store.knowsPlayer(id)) return res.status(404).json({ error: `No player with id ${id}` });
+    const amount = Math.round(Number(req.body?.amount) * 100) / 100;
+    if (!Number.isFinite(amount) || amount === 0) return res.status(400).json({ error: 'Amount must be a number other than 0 (use a minus sign to take money back)' });
+    if (Math.abs(amount) > MAX_ADJUST) return res.status(400).json({ error: `One adjustment is limited to ${MAX_ADJUST} ${config.currency}` });
+    const reason = String(req.body?.reason ?? '').trim().slice(0, 140);
+    if (reason.length < 3) return res.status(400).json({ error: 'A reason is required: it is shown in the player\'s wallet history' });
+    const done = store.adminAdjust(id, amount, reason);
+    if (!done) return res.status(400).json({ error: `The wallet holds only ${store.balance(id)} ${config.currency}` });
+    notifyBalance(id, done.balance);
+    console.log(`[admin] wallet of ${id} adjusted by ${amount} ${config.currency}: ${reason}`);
+    res.json({ id, amount, balance: done.balance, reason });
   });
 
   router.get('/players/:id/transactions', async (req, res) => {

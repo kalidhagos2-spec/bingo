@@ -4,12 +4,13 @@ export const DEFAULT_STAKES = Object.freeze([0, 10, 20, 50]);
 
 /** Owns all rooms, one lobby entry per stake, and knows which room each user is in. */
 export class RoomManager {
-  constructor({ emit, emitTo, rules = {}, stakes = DEFAULT_STAKES, wallet = null, stats = null }) {
+  constructor({ emit, emitTo, rules = {}, stakes = DEFAULT_STAKES, wallet = null, stats = null, isDemo = () => false }) {
     this.emit = emit; // (code, event, payload)
     this.emitTo = emitTo; // (userId, event, payload)
     this.rules = rules;
     this.stakes = [...stakes];
     this.wallet = wallet;
+    this.isDemo = isDemo;
     this.roundStats = stats; // { recordRound } for player statistics
     this.rooms = new Map();
     this.userRoom = new Map(); // userId -> code
@@ -25,6 +26,7 @@ export class RoomManager {
       rules: this.rules,
       wallet: this.wallet,
       stats: this.roundStats,
+      isDemo: this.isDemo,
       emit: (event, payload) => this.emit(code, event, payload),
       emitTo: this.emitTo,
     });

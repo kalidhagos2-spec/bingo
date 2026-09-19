@@ -49,7 +49,7 @@ export function prizePool(stake, tickets, houseCutPercent, maxPrize = Infinity) 
  * The house cut of a played round is reported to `stats.recordRound` as `houseTake`.
  */
 export class Room {
-  constructor({ code, stake = 0, isPrivate = false, rules = {}, emit, emitTo, wallet = null, stats = null, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
+  constructor({ code, stake = 0, isPrivate = false, rules = {}, emit, emitTo, wallet = null, stats = null, isDemo = () => false, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
     this.code = code;
     this.stake = stake;
     this.isPrivate = isPrivate; // created with a share code rather than from the public lobby
@@ -66,6 +66,8 @@ export class Room {
     this.phase = PHASE.WAITING;
     this.round = 0;
     this.players = new Map(); // userId -> { id, name, cards: [{ cartela, cells, marks }], joinedAt }
+    this.isDemo = isDemo; // (userId) => true for a house demo player (see demoBots.js)
+    this.forfeited = []; // players who left during the running round, with the cartelas they paid for
     this.called = [];
     this.drawPool = [];
     this.pool = 0; // prize pool of the round in progress
@@ -116,6 +118,9 @@ export class Room {
     const player = this.players.get(userId);
     if (!player) return;
     if (this.open) for (const c of player.cards) this.refund(player, c.cartela);
+    // Walking out mid-round forfeits the stake, but it is still in the pool being played for:
+    // the round's accounts (and a refund, should a demo player or nobody win) need to know.
+    else if (this.phase === PHASE.PLAYING && player.cards.length) this.forfeited.push({ id: player.id, name: player.name, cards: player.cards, left: true });
     this.players.delete(userId);
     if (this.size === 0) {
       this.clearTimer();
@@ -221,6 +226,7 @@ export class Room {
     this.phase = PHASE.PLAYING;
     this.round += 1;
     this.called = [];
+    this.forfeited = [];
     this.drawPool = drawOrder();
     this.winner = null;
     this.startsAt = null;
@@ -309,27 +315,42 @@ export class Room {
   }
 
   finish(player, line = null, full = false, card = player?.cards[0] ?? null) {
+    const demoWin = Boolean(player) && this.stake > 0 && this.isDemo(player.id);
     this.clearTimer();
     this.phase = PHASE.FINISHED;
     if (player) {
       this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks };
       if (this.pool > 0) this.wallet?.credit(player.id, this.pool, `Prize for room ${this.code}`);
+      // A demo player's win costs the real players nothing: their stakes for this round go back.
+      // That includes a real player who left or lost their connection before the end.
+      if (demoWin) for (const p of [...this.players.values(), ...this.forfeited]) if (!this.isDemo(p.id)) for (const c of p.cards) this.refund(p, c.cartela);
     } else {
       this.winner = null;
-      for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela); // nobody won: stakes go back
+      for (const p of [...this.players.values(), ...this.forfeited]) for (const c of p.cards) this.refund(p, c.cartela); // nobody won: stakes go back
     }
-    const seated = [...this.players.values()].filter((p) => p.cards.length);
+    // Everyone whose stake is in the pool, whether or not they stayed to the end.
+    const seated = [...[...this.players.values()].filter((p) => p.cards.length), ...this.forfeited];
     const participants = seated.map((p) => p.id);
-    const stakes = money(this.stake * this.tickets);
+    // Only real players' stakes are money: demo players stake play money, so the house's take is
+    // what the real players paid in minus what a real winner was paid (it can be negative).
+    const tickets = seated.reduce((n, p) => n + p.cards.length, 0);
+    const realTickets = seated.filter((p) => !this.isDemo(p.id)).reduce((n, p) => n + p.cards.length, 0);
+    const stakes = money(this.stake * tickets); // what the pool was built from; prize = stakes less the house cut
+    const demoStakes = money(this.stake * (tickets - realTickets));
+    const realStakes = demoWin ? 0 : money(this.stake * realTickets); // a demo win refunds the real players
+    const realPrize = player && !demoWin ? this.pool : 0;
     this.stats?.recordRound({
       participants,
-      players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p) })),
+      players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p), ...(p.left ? { left: true } : {}) })),
       winnerId: player?.id ?? null,
-      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line } : null,
+      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, ...(demoWin ? { demo: true } : {}) } : null,
       prize: player ? this.pool : 0,
       stake: this.stake,
       stakes: player ? stakes : 0, // no winner: everything was refunded
-      houseTake: player ? money(stakes - this.pool) : 0,
+      demoStakes: player ? demoStakes : 0,
+      realStakes: player ? realStakes : 0,
+      realPrize,
+      houseTake: player ? money(realStakes - realPrize) : 0, // real money only
       room: this.code,
       round: this.round,
       numbersCalled: this.called.length,
@@ -346,6 +367,7 @@ export class Room {
     this.phase = PHASE.WAITING;
     this.winner = null;
     this.pool = 0;
+    this.called = []; // the finished round leaves nothing on the board: a new table starts blank
     for (const p of this.players.values()) p.cards = [];
     this.broadcast();
   }
@@ -369,7 +391,8 @@ export class Room {
    */
   abort() {
     this.clearTimer();
-    if (this.phase !== PHASE.FINISHED) for (const p of this.players.values()) for (const c of p.cards) this.refund(p, c.cartela);
+    if (this.phase !== PHASE.FINISHED) for (const p of [...this.players.values(), ...this.forfeited]) for (const c of p.cards) this.refund(p, c.cartela);
+    this.forfeited = [];
     this.players.clear();
   }
 

@@ -76,7 +76,7 @@ export class PaymentStore {
    * The Postgres write (balance + a matching `method: 'game'` transaction row, in one
    * DB transaction) happens in the background.
    */
-  adjust(userId, delta, note = '') {
+  adjust(userId, delta, note = '', { type = 'game', method = 'game' } = {}) {
     const wallet = (this.data.wallets[userId] ??= { balance: 0 });
     const next = money(wallet.balance + delta);
     if (next < 0) return null;
@@ -85,7 +85,8 @@ export class PaymentStore {
     const tx = {
       ref: PaymentStore.newRef(),
       userId,
-      method: 'game',
+      type,
+      method,
       amount: money(delta),
       currency: this.currency,
       status: STATUS.PAID,
@@ -101,12 +102,34 @@ export class PaymentStore {
         );
         await client.query(
           `INSERT INTO transactions (ref, user_id, type, method, amount, currency, status, note, created_at, updated_at)
-           VALUES ($1, $2, 'game', 'game', $3, $4, $5, $6, $7, $7)`,
-          [tx.ref, userId, tx.amount, tx.currency, tx.status, tx.note, tx.createdAt],
+           VALUES ($1, $2, $8, $9, $3, $4, $5, $6, $7, $7)`,
+          [tx.ref, userId, tx.amount, tx.currency, tx.status, tx.note, tx.createdAt, tx.type, tx.method],
         );
       }),
     );
     return next;
+  }
+
+  /**
+   * Operator correction of a wallet (refund after a fault, goodwill credit, clawback). Goes
+   * through the same path as every other wallet movement, so the balance can never go below
+   * zero and the player's ledger shows it, as type `adjustment` with the operator's reason.
+   * The house ledger gets an audit row too (fee 0: the house's fee balance is not touched).
+   * Returns { balance, ref }, or null when a debit is larger than the balance.
+   */
+  adminAdjust(userId, delta, reason) {
+    const amount = money(delta);
+    const balance = this.adjust(userId, amount, `Operator adjustment: ${reason}`, { type: 'adjustment', method: 'admin' });
+    if (balance === null) return null;
+    this._enqueue(() =>
+      this.pool.query(`INSERT INTO house_ledger (at, type, user_id, method, amount, fee) VALUES (now(), 'adjustment', $1, 'admin', $2, 0)`, [userId, amount]),
+    );
+    return { balance, amount };
+  }
+
+  /** True when this id is a player we know: has signed up or has ever had a wallet. */
+  knowsPlayer(userId) {
+    return Boolean(this.data.profiles[userId] || this.data.wallets[userId]);
   }
 
   /**
@@ -233,7 +256,7 @@ export class PaymentStore {
    * Free Bingo win, updated in memory at once; the round record, house ledger and the
    * touched profiles are written to Postgres in the background, in one transaction.
    */
-  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, houseTake = 0, room = null, round = null, numbersCalled = null, startedAt = null, freeCoins = 0, now = Date.now() }) {
+  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, demoStakes = 0, realStakes = stakes, realPrize = prize, houseTake = 0, room = null, round = null, numbersCalled = null, startedAt = null, freeCoins = 0, now = Date.now() }) {
     const roundRow = {
       at: new Date(now),
       room,
@@ -243,6 +266,7 @@ export class PaymentStore {
       winner,
       prize,
       stakes,
+      demoStakes,
       houseTake,
       numbersCalled,
       durationMs: startedAt ? Math.max(0, now - startedAt) : null,
@@ -264,16 +288,16 @@ export class PaymentStore {
     this._enqueue(() =>
       withTransaction(this.pool, async (client) => {
         await client.query(
-          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins],
+          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins, demo_stakes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins, roundRow.demoStakes],
         );
-        if (houseTake > 0) {
+        if (houseTake !== 0) { // negative: a real player won a pool that demo players had padded
           await client.query(`UPDATE house_balance SET balance = balance + $1 WHERE id = 1`, [houseTake]);
           await client.query(
             `INSERT INTO house_ledger (at, type, room, round, stake, players, stakes, prize, fee)
              VALUES ($1,'round',$2,$3,$4,$5,$6,$7,$8)`,
-            [roundRow.at, room, round, stake, participants.length, stakes, prize, houseTake],
+            [roundRow.at, room, round, stake, participants.length, realStakes, realPrize, houseTake],
           );
         }
         for (const id of participants) {
@@ -414,7 +438,8 @@ export class PaymentStore {
 
   /** Numbers for the operator dashboard tiles. */
   async adminSummary() {
-    const wallets = Object.values(this.data.wallets);
+    // Demo players (negative ids) hold play money: not a liability, not a customer.
+    const wallets = Object.entries(this.data.wallets).filter(([id]) => Number(id) > 0).map(([, w]) => w);
     const [pendingW, pendingD, txCount, house] = await Promise.all([
       this.pendingWithdrawals(),
       this.pendingDeposits(),
@@ -422,7 +447,7 @@ export class PaymentStore {
       this.house(0),
     ]);
     return {
-      players: Object.keys(this.data.profiles).length,
+      players: Object.keys(this.data.profiles).filter((id) => Number(id) > 0).length,
       walletLiabilities: money(wallets.reduce((s, w) => s + w.balance, 0)),
       pendingWithdrawals: { count: pendingW.length, amount: money(pendingW.reduce((s, t) => s - t.amount, 0)) },
       pendingDeposits: { count: pendingD.length, amount: money(pendingD.reduce((s, t) => s + t.amount, 0)) },
@@ -799,7 +824,7 @@ function txFromRow(row) {
 function roundFromRow(row) {
   return {
     at: row.at.toISOString(), room: row.room, round: row.round, stake: row.stake,
-    players: row.players ?? [], winner: row.winner ?? null, prize: row.prize, stakes: row.stakes,
+    players: row.players ?? [], winner: row.winner ?? null, prize: row.prize, stakes: row.stakes, demoStakes: row.demo_stakes ?? 0,
     houseTake: row.house_take, numbersCalled: row.numbers_called, durationMs: row.duration_ms, freeCoins: row.free_coins,
   };
 }

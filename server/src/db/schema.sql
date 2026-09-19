@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS rounds (
   duration_ms     BIGINT,
   free_coins      NUMERIC(14,2) NOT NULL DEFAULT 0
 );
+-- `stakes` is everything the pool was built from; `demo_stakes` is the part staked by house demo
+-- players (play money). `house_take` and the house ledger count real money only.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS demo_stakes NUMERIC(14,2) NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS rounds_at_idx ON rounds (at DESC);
 CREATE INDEX IF NOT EXISTS rounds_room_idx ON rounds (room);
 

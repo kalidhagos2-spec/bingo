@@ -1,6 +1,13 @@
 import 'dotenv/config';
 
 const env = (key, fallback = '') => (process.env[key] ?? fallback).trim();
+/** "25" -> { count: 25, minCount: 25 }; "20-30" -> { count: 30, minCount: 20 }; anything else -> off. */
+export const demoRange = (text) => {
+  const [a, b = a] = String(text).split('-').map((s) => Number.parseInt(s.trim(), 10));
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return { count: 0, minCount: 0 };
+  return { count: Math.max(a, b), minCount: Math.min(a, b) };
+};
+
 const num = (key, fallback) => {
   const raw = env(key);
   if (raw === '') return fallback;
@@ -64,6 +71,22 @@ export const config = {
   allowedOrigins: env('ALLOWED_ORIGINS').split(',').map((s) => s.trim()).filter(Boolean),
   /** Operator access to /api/admin (house ledger). Empty = open in dev mode only. */
   adminToken: env('ADMIN_TOKEN'),
+
+  /**
+   * Demo players: house bots with random names and play-money wallets that join the public
+   * tables and play like people (see demoBots.js). 0 = off. A real player never loses money
+   * to one: when a demo player wins a paid round the real players' stakes are refunded.
+   */
+  demoBots: {
+    // A number ("6") or a range ("20-30"): with a range, how many are around drifts at random
+    // between the two, like a real crowd through the day.
+    ...demoRange(env('DEMO_BOTS', '0')),
+    minBalance: num('DEMO_BOTS_MIN_BALANCE', 50),
+    maxBalance: num('DEMO_BOTS_MAX_BALANCE', 500),
+    perRoom: num('DEMO_BOTS_PER_ROOM', 3),
+    /** Share of the cartelas at a table with real players that demo players aim to hold: 0.9 = 9 to 1. 0 = off. */
+    share: num('DEMO_BOTS_SHARE', 0),
+  },
 
   /** Multiplayer room rules; see game/room.js DEFAULT_RULES for defaults. */
   game: {

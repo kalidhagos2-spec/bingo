@@ -545,3 +545,21 @@ test('manager: a server shutdown voids unfinished rounds and refunds every stake
   assert.deepEqual(w2.balances, paid);
   assert.equal(done.timer, null);
 });
+
+test('the board is blank when registration re-opens: last round\'s numbers are not carried over', () => {
+  const manager = new RoomManager({ emit() {}, emitTo() {} });
+  const room = manager.joinStake(u1, 0);
+  manager.joinStake(u2, 0);
+  room.choose(1, 1);
+  room.choose(2, 2);
+  room.start();
+  room.callNext();
+  assert.ok(room.called.length >= 2);
+  room.finish(room.players.get(1));
+  room.reopen();
+  assert.equal(room.phase, PHASE.WAITING);
+  assert.deepEqual(room.publicState().called, []);
+  assert.equal(room.publicState().current, null);
+  assert.equal(room.publicState().callIndex, 0);
+  manager.shutdown();
+});
