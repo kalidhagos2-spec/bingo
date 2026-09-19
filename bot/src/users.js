@@ -42,6 +42,7 @@ export class UserStore {
       name: existing?.name ?? null,
       phone: existing?.phone ?? null,
       email: existing?.email ?? null,
+      lang: existing?.lang ?? null, // 'am' | 'en'; null = the default (Amharic), see i18n.js
       signup: existing?.signup ?? null,
       signedUpAt: existing?.signedUpAt ?? null,
       registeredAt: existing?.registeredAt ?? now,
@@ -60,11 +61,11 @@ export class UserStore {
   async _write(user) {
     this.users.set(user.id, user);
     await this.pool.query(
-      `INSERT INTO bot_users (id, username, first_name, last_name, language_code, name, phone, email, signup, signed_up_at, registered_at, last_seen_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      `INSERT INTO bot_users (id, username, first_name, last_name, language_code, name, phone, email, signup, signed_up_at, registered_at, last_seen_at, lang)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO UPDATE SET
          username = $2, first_name = $3, last_name = $4, language_code = $5, name = $6, phone = $7,
-         email = $8, signup = $9, signed_up_at = $10, registered_at = $11, last_seen_at = $12`,
+         email = $8, signup = $9, signed_up_at = $10, registered_at = $11, last_seen_at = $12, lang = $13`,
       [
         user.id,
         user.username ?? null,
@@ -78,6 +79,7 @@ export class UserStore {
         user.signedUpAt ?? null,
         user.registeredAt,
         user.lastSeenAt,
+        user.lang ?? null,
       ],
     );
   }
@@ -97,6 +99,7 @@ function userFromRow(row) {
     name: row.name,
     phone: row.phone,
     email: row.email,
+    lang: row.lang ?? null,
     signup: row.signup ?? null,
     signedUpAt: row.signed_up_at ? row.signed_up_at.toISOString() : null,
     registeredAt: row.registered_at.toISOString(),

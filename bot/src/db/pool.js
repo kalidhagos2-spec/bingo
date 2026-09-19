@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS bot_users (
   registered_at  TIMESTAMPTZ NOT NULL,
   last_seen_at   TIMESTAMPTZ NOT NULL
 );
+-- The language the player chose in the bot (am | en); NULL means the default, Amharic.
+ALTER TABLE bot_users ADD COLUMN IF NOT EXISTS lang TEXT;
 `;
 
 /** Applies the bot's one table. Idempotent, so this runs on every boot. */

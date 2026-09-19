@@ -5,7 +5,9 @@ import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import { UserStore } from './users.js';
 import { createPool, migrate } from './db/pool.js';
-import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, promptFor, nameChoices, md } from './signup.js';
+import { STEP, begin, applyText, applyContact, hasSignedUp, isComplete, promptFor, nameChoices } from './signup.js';
+import { t, md, langOf, LANGS, LANG_NAMES, BOT_PROFILE } from './i18n.js';
+import { helpText, rulesText, balanceText, depositText, withdrawText, contactText } from './replies.js';
 
 const { BOT_TOKEN, WEBAPP_URL, DATABASE_URL } = process.env;
 const API_URL = (process.env.API_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '');
@@ -13,6 +15,9 @@ const API_URL = (process.env.API_URL || 'http://127.0.0.1:3000').replace(/\/+$/,
 // https:// URL) -- explicit WEBHOOK_URL still wins, and still lets this work the same way on
 // any other host that doesn't set that variable.
 const WEBHOOK_URL = process.env.WEBHOOK_URL || process.env.RENDER_EXTERNAL_URL;
+// Shown by /contact (without the @). Empty = not announced yet.
+const SUPPORT_USERNAME = (process.env.SUPPORT_USERNAME || '').replace(/^@/, '');
+const CHANNEL_USERNAME = (process.env.CHANNEL_USERNAME || '').replace(/^@/, '');
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN is missing. Copy .env.example to .env and fill it in.');
@@ -30,14 +35,19 @@ await store.load();
 
 const bot = new Telegraf(BOT_TOKEN);
 
-const screenUrl = (screen) => `${WEBAPP_URL}${WEBAPP_URL.includes('?') ? '&' : '?'}screen=${screen}`;
+/** Mini App link for a screen, opened in the player's language (the app reads ?lang=). */
+const screenUrl = (screen, lang) => `${WEBAPP_URL}${WEBAPP_URL.includes('?') ? '&' : '?'}screen=${screen}&lang=${lang}`;
 
-const mainKeyboard = () =>
-  Markup.inlineKeyboard([
-    [Markup.button.webApp('🎮 Play Bingo', screenUrl('play'))],
-    [Markup.button.webApp('💵 Wallet', screenUrl('wallet')), Markup.button.webApp('💸 Send money', screenUrl('transfer'))],
-    [Markup.button.webApp('👤 Profile', screenUrl('profile')), Markup.button.callback('❓ How to play', 'help')],
+const mainKeyboard = (user) => {
+  const lang = langOf(user);
+  return Markup.inlineKeyboard([
+    [Markup.button.webApp(t(lang, 'menu.play'), screenUrl('play', lang))],
+    [Markup.button.webApp(t(lang, 'menu.wallet'), screenUrl('wallet', lang)), Markup.button.webApp(t(lang, 'menu.send'), screenUrl('transfer', lang))],
+    [Markup.button.callback(t(lang, 'menu.deposit'), 'deposit'), Markup.button.callback(t(lang, 'menu.withdraw'), 'withdraw')],
+    [Markup.button.webApp(t(lang, 'menu.profile'), screenUrl('profile', lang)), Markup.button.callback(t(lang, 'menu.howto'), 'help')],
+    [Markup.button.callback(t(lang, 'menu.language'), 'language')],
   ]);
+};
 
 const displayName = (u) => u.name || u.firstName || u.username || 'player';
 
@@ -77,7 +87,7 @@ async function beginSignup(ctx, user) {
 /** Sends `text` with the keyboard of the step the user is at. */
 async function ask(ctx, user, text) {
   if (user.signup?.step === STEP.NAME) return askName(ctx, user, text);
-  if (user.signup?.step === STEP.PHONE) return askPhone(ctx, text);
+  if (user.signup?.step === STEP.PHONE) return askPhone(ctx, user, text);
   return ctx.reply(text, { parse_mode: 'Markdown', ...Markup.removeKeyboard() });
 }
 
@@ -89,10 +99,10 @@ async function askName(ctx, user, text) {
   });
 }
 
-async function askPhone(ctx, text) {
+async function askPhone(ctx, user, text) {
   await ctx.reply(text, {
     parse_mode: 'Markdown',
-    ...Markup.keyboard([[Markup.button.contactRequest('📱 Share my number')], [SKIP]]).oneTime().resize(),
+    ...Markup.keyboard([[Markup.button.contactRequest(t(langOf(user), 'signup.share'))], [t(langOf(user), 'signup.skip')]]).oneTime().resize(),
   });
 }
 
@@ -100,7 +110,7 @@ async function finishSignup(ctx, user, reply) {
   await store.put(user);
   await syncProfile(user);
   await ctx.reply(reply, { parse_mode: 'Markdown', ...Markup.removeKeyboard() });
-  await ctx.reply('Ready when you are 👇', mainKeyboard());
+  await ctx.reply(t(langOf(user), 'menu.ready'), mainKeyboard(user));
 }
 
 /** Handles a text or contact reply while a sign-up is in progress. Returns true if consumed. */
@@ -124,39 +134,37 @@ bot.start(async (ctx) => {
     await beginSignup(ctx, user);
     return;
   }
-  await ctx.reply(`👋 Welcome back, *${md(displayName(user))}*!\n\nPress *Play Bingo* to open the game.`, {
-    parse_mode: 'Markdown',
-    ...mainKeyboard(),
-  });
+  await ctx.reply(t(langOf(user), 'menu.welcomeBack', { name: md(displayName(user)) }), { parse_mode: 'Markdown', ...mainKeyboard(user) });
 });
 
 bot.command('play', async (ctx) => {
   const { user } = await store.register(ctx.from);
   if (!hasSignedUp(user)) return beginSignup(ctx, user);
-  await ctx.reply('Tap below to open the Bingo Mini App 👇', mainKeyboard());
+  await ctx.reply(t(langOf(user), 'menu.open'), mainKeyboard(user));
 });
 
 async function showProfile(ctx) {
   const user = store.get(ctx.from.id);
   if (!user) {
-    await ctx.reply('You are not registered yet. Send /start to sign up.');
+    await ctx.reply(t(langOf(null), 'profile.none'));
     return;
   }
+  const lang = langOf(user);
   await ctx.reply(
     [
       `👤 *${md(displayName(user))}*`,
       `ID: \`${user.id}\``,
-      user.username ? `Telegram: @${md(user.username)}` : null,
-      `Phone: ${user.phone ?? '— not added'}`,
-      user.signedUpAt ? `Signed up: ${new Date(user.signedUpAt).toLocaleDateString()}` : '⚠️ Sign-up not finished',
+      user.username ? t(lang, 'profile.telegram', { username: md(user.username) }) : null,
+      t(lang, 'profile.phone', { phone: user.phone ?? t(lang, 'profile.noPhone') }),
+      user.signedUpAt ? t(lang, 'profile.signedUp', { date: new Date(user.signedUpAt).toLocaleDateString() }) : t(lang, 'profile.unfinished'),
     ]
       .filter(Boolean)
       .join('\n'),
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
-        [Markup.button.webApp('👤 Open profile', screenUrl('profile'))],
-        [Markup.button.callback(isComplete(user) ? '📱 Update phone number' : '📝 Finish sign-up', 'signup')],
+        [Markup.button.webApp(t(lang, 'profile.open'), screenUrl('profile', lang))],
+        [Markup.button.callback(isComplete(user) ? t(lang, 'profile.updatePhone') : t(lang, 'profile.finish'), 'signup')],
       ]),
     },
   );
@@ -174,18 +182,61 @@ bot.action('signup', async (ctx) => {
   await beginSignup(ctx, user);
 });
 
-bot.action('help', async (ctx) => {
+// ---------- help commands ----------
+// Each one is both a /command and a menu button. The numbers they quote (house accounts,
+// limits, fees, table rules, the player's balance) come from the game server, so an operator
+// who changes a setting never has to touch the bot.
+
+/** What the game server knows about this player and the current settings; null when it cannot be reached. */
+async function serverInfo(userId) {
+  try {
+    const res = await fetch(`${API_URL}/api/profile/bot/${userId}`, { headers: { 'x-bot-token': BOT_TOKEN }, signal: AbortSignal.timeout(4000) });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Registers `name` as a /command and as an inline-button action answering with `build(lang, info, user)`. */
+function helpCommand(name, build, { needsServer = false, keyboard = false } = {}) {
+  const run = async (ctx) => {
+    const { user } = await store.register(ctx.from);
+    const lang = langOf(user);
+    const info = await serverInfo(user.id);
+    const text = needsServer && !info ? t(lang, 'server.down') : build(lang, info, user);
+    await ctx.reply(text, { parse_mode: 'Markdown', ...(keyboard ? mainKeyboard(user) : {}) });
+  };
+  bot.command(name, run);
+  bot.action(name, async (ctx) => {
+    await ctx.answerCbQuery();
+    await run(ctx);
+  });
+}
+
+helpCommand('help', (lang, info) => `${rulesText(lang, info)}\n\n${helpText(lang)}`);
+helpCommand('rules', (lang, info) => rulesText(lang, info));
+helpCommand('balance', (lang, info) => balanceText(lang, info), { needsServer: true, keyboard: true });
+helpCommand('deposit', (lang, info) => depositText(lang, info), { keyboard: true });
+helpCommand('withdraw', (lang, info) => withdrawText(lang, info), { keyboard: true });
+helpCommand('contact', (lang, _info, user) => contactText(lang, { id: user.id, support: SUPPORT_USERNAME, channel: CHANNEL_USERNAME }));
+
+const askLanguage = async (ctx) => {
+  const { user } = await store.register(ctx.from);
+  await ctx.reply(t(langOf(user), 'language.ask'), Markup.inlineKeyboard([LANGS.map((code) => Markup.button.callback(LANG_NAMES[code], `lang:${code}`))]));
+};
+bot.command('language', askLanguage);
+bot.action('language', async (ctx) => {
   await ctx.answerCbQuery();
-  await ctx.reply(
-    [
-      '🎱 *How to play*',
-      '1. Press *Play Bingo* and pick a table (10, 20 or 50 ETB entry from your wallet).',
-      '2. Pick up to 4 cartelas (1–400) before the 40 s timer runs out; each one pays the entry.',
-      '3. Numbers are called automatically — tap them on your card.',
-      '4. Press *BINGO!* as soon as a cartela has a full row, column, diagonal or all four corners marked. 🏆',
-    ].join('\n'),
-    { parse_mode: 'Markdown' },
-  );
+  await askLanguage(ctx);
+});
+bot.action(/^lang:(\w+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const { user } = await store.register(ctx.from);
+  const lang = LANGS.includes(ctx.match[1]) ? ctx.match[1] : langOf(user);
+  const next = await store.put({ ...user, lang });
+  // Mid sign-up the question is asked again in the new language; otherwise the menu is redrawn.
+  if (next.signup) return ask(ctx, next, `${t(lang, 'language.set')}\n\n${promptFor(next)}`);
+  await ctx.reply(t(lang, 'language.set'), { parse_mode: 'Markdown', ...mainKeyboard(next) });
 });
 
 // ---------- messages ----------
@@ -193,34 +244,38 @@ bot.action('help', async (ctx) => {
 bot.on(message('contact'), async (ctx) => {
   const { user } = await store.register(ctx.from);
   if (await continueSignup(ctx, user, (u) => applyContact(u, ctx.message.contact))) return;
-  await ctx.reply('Thanks! Use *My profile* to update your number.', { parse_mode: 'Markdown', ...mainKeyboard() });
+  await ctx.reply(t(langOf(user), 'menu.contactThanks'), { parse_mode: 'Markdown', ...mainKeyboard(user) });
 });
 
 bot.on(message('text'), async (ctx) => {
   const { user } = await store.register(ctx.from);
   if (await continueSignup(ctx, user, (u) => applyText(u, ctx.message.text))) return;
-  await ctx.reply('Send /start to get the Play button.', mainKeyboard());
+  await ctx.reply(t(langOf(user), 'menu.fallback'), mainKeyboard(user));
 });
 
 // Any other interaction keeps the user registered.
 bot.on('message', async (ctx) => {
-  await store.register(ctx.from);
-  await ctx.reply('Send /start to get the Play button.', mainKeyboard());
+  const { user } = await store.register(ctx.from);
+  await ctx.reply(t(langOf(user), 'menu.fallback'), mainKeyboard(user));
 });
 
 bot.catch((err, ctx) => {
   console.error(`Error handling update ${ctx.update.update_id}:`, err);
 });
 
-// Cosmetic: a DNS blip here must not crash the bot before it even starts polling.
+// The "/" command menu and the bot's public profile (what BotFather's /setcommands,
+// /setdescription and /setabouttext set), in Amharic like the rest of the bot. Cosmetic: a DNS
+// blip here must not crash the bot before it even starts polling. BOT_APPLY_PROFILE=false
+// leaves whatever was typed into BotFather by hand.
+const COMMANDS = ['start', 'play', 'balance', 'deposit', 'withdraw', 'rules', 'profile', 'language', 'contact', 'help'];
 try {
-  await bot.telegram.setMyCommands([
-    { command: 'start', description: 'Sign up and get the Play button' },
-    { command: 'play', description: 'Open the Bingo Mini App' },
-    { command: 'profile', description: 'View or edit your profile' },
-  ]);
+  await bot.telegram.setMyCommands(COMMANDS.map((command) => ({ command, description: t('am', `cmd.${command}`) })));
+  if (process.env.BOT_APPLY_PROFILE !== 'false') {
+    await bot.telegram.setMyDescription(BOT_PROFILE.description);
+    await bot.telegram.setMyShortDescription(BOT_PROFILE.about);
+  }
 } catch (err) {
-  console.warn(`[bot] could not register command menu (${err.code ?? err.message}); continuing`);
+  console.warn(`[bot] could not set the command menu / profile (${err.code ?? err.message}); continuing`);
 }
 
 // Long polling (bot.launch()) keeps its own connection open to Telegram and can't be woken

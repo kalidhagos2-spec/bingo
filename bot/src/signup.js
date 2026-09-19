@@ -4,43 +4,32 @@
  * Telegram name, or they type their own), then shares (or skips) their phone number.
  * Both can be changed later in the Mini App's Profile screen.
  */
+import { t, allTexts, langOf, md } from './i18n.js';
+
+export { md };
+
 export const STEP = Object.freeze({ NAME: 'name', PHONE: 'phone' });
 
 export const NAME_MIN = 2;
 export const NAME_MAX = 32;
 
-export const SKIP = 'Skip for now';
+/** The English label; a tapped "skip" is recognised in every language (see `isSkip`). */
+export const SKIP = t('en', 'signup.skip');
+export const isSkip = (text) => allTexts('signup.skip').includes(String(text ?? '').trim());
 
-/** Escapes what Telegram's (legacy) Markdown would read as formatting; usernames are full of underscores. */
-export const md = (text) => String(text ?? '').replace(/([_*`[])/g, '\\$1');
-
+/** Sign-up messages in the player's language (Amharic unless they chose English). */
 export const prompts = {
-  name: () =>
-    [
-      '👋 Welcome to *USA Bingo*! Two quick steps and you are in.',
-      '',
-      '*Step 1 of 2 · your username*',
-      'This is the name other players see at the table.',
-      `Tap a suggestion below, or type your own (${NAME_MIN}–${NAME_MAX} characters).`,
-    ].join('\n'),
-  phone: (user) =>
-    [
-      `Nice to meet you, *${md(user.name)}*!`,
-      '',
-      '*Step 2 of 2 · your phone number*',
-      'Share your phone number so deposits, cash-outs and transfers are matched to your account.',
-      'Tap the button below, or type it (e.g. +2519…).',
-    ].join('\n'),
+  name: (user) => t(langOf(user), 'signup.name', { min: NAME_MIN, max: NAME_MAX }),
+  phone: (user) => t(langOf(user), 'signup.phone', { name: md(user.name) }),
   done: (user) =>
-    [
-      `✅ You are registered, *${md(user.name)}*!`,
-      user.phone ? `📱 ${user.phone}` : '📱 No phone yet — add it later from *My profile*.',
-      '',
-      'Press *Play Bingo* to open the game.',
-    ].join('\n'),
-  nameInvalid: `That username will not work. Use ${NAME_MIN}–${NAME_MAX} characters with at least one letter, or tap a suggestion below.`,
-  nameFirst: 'First choose your username: tap a suggestion below or type one.',
-  phoneInvalid: 'That does not look like a phone number. Tap *Share my number* or type it like +251900000000.',
+    t(langOf(user), 'signup.done', {
+      name: md(user.name),
+      phoneLine: user.phone ? t(langOf(user), 'signup.donePhone', { phone: user.phone }) : t(langOf(user), 'signup.doneNoPhone'),
+    }),
+  nameInvalid: (user) => t(langOf(user), 'signup.nameInvalid', { min: NAME_MIN, max: NAME_MAX }),
+  nameFirst: (user) => t(langOf(user), 'signup.nameFirst'),
+  phoneInvalid: (user) => t(langOf(user), 'signup.phoneInvalid'),
+  ownContact: (user) => t(langOf(user), 'signup.ownContact'),
 };
 
 /** Suggested name from Telegram fields, trimmed to the profile limit. */
@@ -114,24 +103,24 @@ export function applyText(user, text) {
   const value = String(text ?? '').trim();
   if (user.signup?.step === STEP.NAME) {
     const name = cleanName(value);
-    if (!name) return { user, reply: prompts.nameInvalid, done: false };
+    if (!name) return { user, reply: prompts.nameInvalid(user), done: false };
     const next = { ...user, name, signup: { ...user.signup, step: STEP.PHONE } };
     return { user: next, reply: prompts.phone(next), done: false };
   }
   if (user.signup?.step !== STEP.PHONE) return { user, reply: null, done: false };
-  if (value === SKIP) return finish({ ...user, phone: user.phone ?? null });
+  if (isSkip(value)) return finish({ ...user, phone: user.phone ?? null });
   const phone = normalizePhone(value);
-  if (!phone) return { user, reply: prompts.phoneInvalid, done: false };
+  if (!phone) return { user, reply: prompts.phoneInvalid(user), done: false };
   return finish({ ...user, phone });
 }
 
 /** Applies a shared Telegram contact (only the user's own number is accepted). */
 export function applyContact(user, contact) {
-  if (user.signup?.step === STEP.NAME) return { user, reply: prompts.nameFirst, done: false };
+  if (user.signup?.step === STEP.NAME) return { user, reply: prompts.nameFirst(user), done: false };
   if (user.signup?.step !== STEP.PHONE) return { user, reply: null, done: false };
-  if (contact?.user_id && contact.user_id !== user.id) return { user, reply: 'Please share *your own* contact.', done: false };
+  if (contact?.user_id && contact.user_id !== user.id) return { user, reply: prompts.ownContact(user), done: false };
   const phone = normalizePhone(contact?.phone_number);
-  if (!phone) return { user, reply: prompts.phoneInvalid, done: false };
+  if (!phone) return { user, reply: prompts.phoneInvalid(user), done: false };
   return finish({ ...user, phone });
 }
 

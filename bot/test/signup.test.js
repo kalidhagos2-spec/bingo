@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { STEP, SKIP, begin, applyText, applyContact, hasSignedUp, isComplete, normalizePhone, suggestedName, nameChoices, cleanName, promptFor, md } from '../src/signup.js';
 
-const fresh = { id: 42, firstName: 'Abebe', lastName: 'Kebede', username: 'abebe', name: null, phone: null, signup: null, signedUpAt: null };
+// The flow is asserted on its English texts; Amharic, the default, is covered at the end.
+const fresh = { id: 42, firstName: 'Abebe', lastName: 'Kebede', username: 'abebe', name: null, phone: null, lang: 'en', signup: null, signedUpAt: null };
 
 /** A fresh player who has already answered the username step. */
 const named = (name = 'Abebe Kebede') => applyText(begin(fresh), name).user;
@@ -117,4 +118,18 @@ test('phone normalisation and suggested names', () => {
   assert.equal(suggestedName({ id: 5, username: 'sara' }), 'sara');
   assert.equal(suggestedName({ id: 5 }), 'Player 5');
   assert.equal(suggestedName({ id: 5, firstName: 'x'.repeat(40) }).length, 32);
+});
+
+test('sign-up speaks Amharic by default and understands the Amharic skip button', () => {
+  const user = begin({ ...fresh, lang: null });
+  assert.match(promptFor(user), /ደረጃ 1\/2/);
+  const picked = applyText(user, 'abebe');
+  assert.match(picked.reply, /ደረጃ 2\/2/);
+  assert.match(applyText(picked.user, 'ሰላም').reply, /ስልክ ቁጥር አይመስልም/);
+  const done = applyText(picked.user, 'ለአሁን ዝለል');
+  assert.equal(done.done, true);
+  assert.equal(done.user.phone, null);
+  assert.match(done.reply, /ተመዝግበዋል/);
+  // the English label still works for someone who switched language mid-way
+  assert.equal(applyText(picked.user, SKIP).done, true);
 });
