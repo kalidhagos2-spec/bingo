@@ -425,3 +425,41 @@ test('a claim is refused if any number of the line was not called, whatever the 
   assert.equal(room.phase, PHASE.PLAYING);
   manager.shutdown();
 });
+
+test('DEMO_BOTS_PER_ROOM takes a range: a table fills to a random size in it, drawn anew every round', async () => {
+  const { demoRange } = await import('../src/config.js');
+  assert.deepEqual(demoRange('20-30'), { count: 30, minCount: 20 });
+
+  const store = fakeStore();
+  const wallet = { charge: (id, amount, note) => store.adjust(id, -amount, note) !== null, credit: (id, amount, note) => void store.adjust(id, amount, note) };
+  const manager = new RoomManager({ emit() {}, emitTo() {}, wallet, stakes: [10], isDemo: isDemoId, rules: { minPlayers: 2, maxPlayers: 60, countdownMs: 3_600_000, callIntervalMs: 3_600_000, restartDelayMs: 3_600_000 } });
+  let clock = 9_000_000;
+  let seed = 11;
+  const rng = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const bots = createDemoBots({ manager, store, stakes: [10], count: 60, perRoom: 30, minPerRoom: 20, rng, now: () => clock, log() {} });
+  await bots.start();
+  bots.stop();
+  const step = () => {
+    clock += 1000;
+    bots.tick();
+  };
+
+  const seen = [];
+  for (let round = 0; round < 8; round++) {
+    for (let i = 0; i < 90; i++) step(); // registration: the table fills (or thins out) to this round's size
+    const room = [...manager.rooms.values()][0];
+    assert.equal(manager.rooms.size, 1); // one demo table per stake, not a second one
+    const size = [...room.players.keys()].filter(isDemoId).length;
+    assert.ok(size >= 20 && size <= 30, `round ${round}: ${size} demo players`);
+    seen.push(size);
+    room.start();
+    for (let i = 0; i < 400 && room.phase === PHASE.PLAYING; i++) {
+      step();
+      if (room.phase === PHASE.PLAYING) room.callNext();
+    }
+    assert.equal(room.phase, PHASE.FINISHED);
+    room.reopen();
+  }
+  assert.ok(new Set(seen).size >= 3, `sizes ${seen.join(',')}`); // it really varies
+  manager.shutdown();
+});

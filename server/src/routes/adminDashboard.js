@@ -397,13 +397,13 @@ document.addEventListener('click', async (e) => {
   }
   if (t.dataset.adjust) {
     const who = (t.dataset.name || 'player') + ' (' + t.dataset.adjust + ')';
-    const raw = prompt('Adjust the wallet of ' + who + '. Balance now: ' + money(t.dataset.balance) + '\n\nAmount in ' + CUR + ': 30 adds 30, -30 takes 30 back.');
+    const raw = prompt('Adjust the wallet of ' + who + '. Balance now: ' + money(t.dataset.balance) + '\\n\\nAmount in ' + CUR + ': 30 adds 30, -30 takes 30 back.');
     if (raw === null) return;
     const amount = Number(String(raw).replace(',', '.').trim());
     if (!Number.isFinite(amount) || amount === 0) return toast('Enter a number other than 0', true);
     const reason = prompt('Reason (the player sees it in their wallet history):', amount > 0 ? 'Refund' : 'Correction');
     if (reason === null) return;
-    if (!confirm((amount > 0 ? 'ADD ' : 'TAKE ') + money(Math.abs(amount)) + (amount > 0 ? ' to ' : ' from ') + who + '?\nNew balance: ' + money(Number(t.dataset.balance) + amount) + '\nReason: ' + reason)) return;
+    if (!confirm((amount > 0 ? 'ADD ' : 'TAKE ') + money(Math.abs(amount)) + (amount > 0 ? ' to ' : ' from ') + who + '?\\nNew balance: ' + money(Number(t.dataset.balance) + amount) + '\\nReason: ' + reason)) return;
     try {
       const r = await api('/api/admin/players/' + t.dataset.adjust + '/adjust', { method: 'POST', body: JSON.stringify({ amount, reason }) });
       toast('Wallet adjusted · new balance ' + money(r.balance));

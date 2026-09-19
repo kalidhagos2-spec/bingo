@@ -61,7 +61,8 @@ export function createDemoBots({
   crowdMs = [4 * 60_000, 10 * 60_000], // how long one crowd size lasts before it is re-rolled
   minBalance = 50,
   maxBalance = 500,
-  perRoom = 3,
+  perRoom = 3, // most demo players at one table
+  minPerRoom = perRoom, // fewest; every table draws its own size between the two, anew each round
   // The share of the cartelas at a table with real players that demo players aim to hold
   // (0.9 = nine for every one of theirs). Every cartela keeps exactly the same chance in the
   // draw, so this sets how often a demo player wins without touching the game itself. 0 = off.
@@ -80,9 +81,11 @@ export function createDemoBots({
   // How many demo players are "online" right now: bot i is around while i < active. A bot that
   // falls outside finishes its round and leaves; one that falls inside turns up a little later.
   let active = 0;
+  const sizes = new Map(); // `${code}:${round}` -> how many players this table fills to in that round
   let crowdUntil = 0;
   function rollCrowd(t) {
     if (t < crowdUntil) return;
+    for (const key of sizes.keys()) if (!manager.rooms.has(key.split(':')[0])) sizes.delete(key); // tables that closed
     active = int(Math.min(minCount, count), count);
     crowdUntil = t + between(crowdMs[0], crowdMs[1]);
   }
@@ -148,6 +151,8 @@ export function createDemoBots({
     bot.planned = `${room.code}:${room.round}`;
     bot.marks.clear();
     bot.claimAt = null;
+    // This round the table is smaller than the last one: the surplus get up, one by one.
+    if (!justArrived && demoCount(room) > seatsFor(room)) return void leave(bot, t);
     if (!justArrived && humanCount(room) === 0) {
       // A real player's table that is short of company comes first: go there now.
       if (shortTable()) return void leave(bot, t, 0);
@@ -178,8 +183,18 @@ export function createDemoBots({
     return real === 0 ? 0 : Math.max(0, Math.ceil((share / (1 - share)) * real) - ticketsOf(room, true));
   }
 
-  /** Demo seats at a table: they fill it to `perRoom` players in all, or to the brim when the share needs more of them. */
-  const seatsFor = (room) => (shortOfShare(room) > 0 ? room.rules.maxPlayers - humanCount(room) : Math.max(0, Math.min(perRoom, room.rules.maxPlayers) - humanCount(room)));
+  /** How full this table gets this round: a number between `minPerRoom` and `perRoom`, drawn once per table and round. */
+  function sizeOf(room) {
+    const key = `${room.code}:${room.round}`;
+    if (!sizes.has(key)) {
+      for (const old of sizes.keys()) if (old.startsWith(`${room.code}:`)) sizes.delete(old);
+      sizes.set(key, int(Math.min(minPerRoom, perRoom), perRoom));
+    }
+    return sizes.get(key);
+  }
+
+  /** Demo seats at a table: they fill it to its size for this round, or to the brim when the share needs more of them. */
+  const seatsFor = (room) => (shortOfShare(room) > 0 ? room.rules.maxPlayers - humanCount(room) : Math.max(0, Math.min(sizeOf(room), room.rules.maxPlayers) - humanCount(room)));
 
   function pickCartela(bot, room, t) {
     const me = room.players.get(bot.id);

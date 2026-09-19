@@ -83,7 +83,9 @@ export const config = {
     ...demoRange(env('DEMO_BOTS', '0')),
     minBalance: num('DEMO_BOTS_MIN_BALANCE', 50),
     maxBalance: num('DEMO_BOTS_MAX_BALANCE', 500),
-    perRoom: num('DEMO_BOTS_PER_ROOM', 3),
+    /** Players a table is filled to. A range ("20-30") gives every table its own random size, drawn anew each round. */
+    perRoom: demoRange(env('DEMO_BOTS_PER_ROOM', '3')).count,
+    minPerRoom: demoRange(env('DEMO_BOTS_PER_ROOM', '3')).minCount,
     /** Share of the cartelas at a table with real players that demo players aim to hold: 0.9 = 9 to 1. 0 = off. */
     share: num('DEMO_BOTS_SHARE', 0),
   },
