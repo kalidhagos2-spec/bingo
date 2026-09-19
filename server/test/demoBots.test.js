@@ -327,3 +327,101 @@ test('one demo table per stake, filled to DEMO_BOTS_PER_ROOM players; real playe
   assert.equal([...mine.players.keys()].filter(isDemoId).length, 29);
   manager.shutdown();
 });
+
+test('tables of 50+: a real player gets a full table within seconds, even when the free demo players are used up', async () => {
+  const store = fakeStore({ 42: 500, 43: 500 });
+  const wallet = { charge: (id, amount, note) => store.adjust(id, -amount, note) !== null, credit: (id, amount, note) => void store.adjust(id, amount, note) };
+  const manager = new RoomManager({ emit() {}, emitTo() {}, wallet, stakes: [10, 20, 50], isDemo: isDemoId, rules: { minPlayers: 2, maxPlayers: 60, countdownMs: 3_600_000, callIntervalMs: 3_600_000, restartDelayMs: 3_600_000 } });
+  let clock = 20_000_000;
+  const bots = createDemoBots({ manager, store, stakes: [10, 20, 50], count: 224, perRoom: 56, now: () => clock, log() {} });
+  await bots.start();
+  bots.stop();
+  const tick = (n) => {
+    for (let i = 0; i < n; i++) {
+      clock += 1000;
+      bots.tick();
+    }
+  };
+  tick(60);
+  const demoTables = [...manager.rooms.values()];
+  assert.equal(demoTables.length, 3);
+  for (const room of demoTables) assert.ok(room.players.size >= 50, `table ${room.stake}: ${room.players.size}`);
+  for (const room of demoTables) room.start();
+
+  // First real player: the free demo players sit down with her at once.
+  const hers = manager.joinStake({ id: 42, first_name: 'Sara' }, 10);
+  hers.choose(42, 5);
+  tick(15);
+  assert.ok(hers.players.size >= 50, `her table: ${hers.players.size}`);
+  assert.ok(hers.ready >= 50, `ready: ${hers.ready}`); // and they have their cartelas
+
+  // Second real player, nobody free: when a demo table re-opens, its players move over.
+  hers.start();
+  const his = manager.joinStake({ id: 43, first_name: 'Kal' }, 20);
+  his.choose(43, 9);
+  tick(10);
+  assert.ok(his.players.size < 50);
+  demoTables[0].finish(null);
+  demoTables[0].reopen();
+  tick(15);
+  assert.ok(his.players.size >= 50, `his table: ${his.players.size}`);
+  manager.shutdown();
+});
+
+test('every win is proven by the balls: 40 full rounds, each winning number was called before the claim', async () => {
+  const { store, bots, manager, step } = setup({ count: 12, perRoom: 12, share: 0.9, balances: { 42: 100000 } });
+  await bots.start();
+  bots.stop();
+  const room = manager.joinStake({ id: 42, first_name: 'Sara' }, 10);
+  let realWins = 0;
+  for (let round = 0; round < 40; round++) {
+    room.choose(42, 1 + (round % 300));
+    until(step, () => room.ready >= 6, 200);
+    room.start();
+    while (room.phase === PHASE.PLAYING) {
+      room.callNext();
+      if (room.phase !== PHASE.PLAYING) break;
+      // Sara plays properly on even rounds, so real and demo winners are both covered
+      if (round % 2 === 0) {
+        try {
+          room.mark(42, room.called.at(-1));
+        } catch {
+          /* not on her card */
+        }
+        try {
+          room.claim(42);
+        } catch {
+          /* not yet */
+        }
+      }
+      step();
+    }
+    const record = store.rounds.at(-1);
+    assert.ok(record.winner, `round ${round} had a winner`);
+    assert.ok(record.winner.numbers.length >= 4 && record.winner.numbers.length <= 5);
+    for (const n of record.winner.numbers) assert.ok(record.called.includes(n), `round ${round}: ${n} was never called`);
+    assert.equal(record.called.length, record.numbersCalled);
+    assert.equal(new Set(record.called).size, record.called.length); // no ball twice
+    // and the numbers really are a line (or the corners) of the winner's own cartela
+    const card = (await import('../src/game/bingo.js')).cardForCartela(record.winner.cartela);
+    assert.deepEqual(record.winner.line.map((i) => card[i].value).filter((v) => v !== null), record.winner.numbers);
+    if (record.winner.id === 42) realWins++;
+    room.reopen();
+  }
+  assert.ok(realWins >= 1, 'a real player who plays properly does win');
+  manager.shutdown();
+});
+
+test('a claim is refused if any number of the line was not called, whatever the marks say', () => {
+  const manager = new RoomManager({ emit() {}, emitTo() {}, isDemo: isDemoId });
+  const room = manager.joinStake({ id: 1, first_name: 'A' }, 0);
+  manager.joinStake({ id: 2, first_name: 'B' }, 0);
+  room.choose(1, 1);
+  room.choose(2, 2);
+  room.start();
+  const card = room.players.get(1).cards[0];
+  for (const i of [0, 1, 2, 3, 4]) card.marks[i] = true; // marks forged past the server's own checks
+  assert.throws(() => room.claim(1), /not been called/);
+  assert.equal(room.phase, PHASE.PLAYING);
+  manager.shutdown();
+});

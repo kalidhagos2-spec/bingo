@@ -480,7 +480,8 @@ export default function Game({ user, onNav, haptic, active = true }) {
       <section className="w-full grid grid-cols-3 gap-2">
         <Stat label={t('game.stat.prize')} value={room.stake > 0 ? etb(room.pool) : t('game.free')} />
         <Stat label={t('game.stat.call')} value={shownCalled.length || '–'} />
-        <Stat label={t('game.stat.players')} value={playersInRound} />
+        {/* The prize is built from cartelas, not heads: 3 players holding 12 cartelas play for 12 stakes. */}
+        <Stat label={t('game.stat.playersCartelas')} value={`${playersInRound} · ${room.tickets ?? 0}`} />
       </section>
 
       {many ? (
@@ -591,7 +592,7 @@ export default function Game({ user, onNav, haptic, active = true }) {
           <p className="mt-2 font-bold">{room.phase === 'countdown' ? t('game.aboutToStart') : t('game.waitingPlayers')}</p>
           <span className="my-4 inline-block w-8 h-8 rounded-full border-4 border-rose-500 border-t-transparent animate-spin" />
           <p className="w-full rounded-xl bg-aqua-400 text-ink-950 font-black py-2">
-            {room.stake > 0 ? t('game.prizePool', { amount: etb(room.pool) }) : t('game.freeTable')} · {t('game.nPlaying', { n: room.ready })}
+            {room.stake > 0 ? t('game.prizePool', { amount: etb(room.pool) }) : t('game.freeTable')} · {t('game.nPlaying', { n: room.ready })} · {t('game.nCartelas', { n: room.tickets ?? 0 })}
           </p>
           <button onClick={() => setReady(false)} className="mt-2 w-full rounded-xl bg-ink-700 border border-ink-600 font-bold py-2">
             {t('game.changeCartela')}
@@ -718,7 +719,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
           </p>
         )}
         <p className="text-[11px] text-slate-400">
-          {room.stake > 0 ? t('pick.perCartela', { amount: etb(room.stake), prize: etb(room.pool) }) : t('game.freeTable')} · {t('pick.inRoom', { n: room.players.length })}
+          {room.stake > 0 ? t('pick.perCartela', { amount: etb(room.stake), n: room.tickets ?? 0, prize: etb(room.pool) }) : t('game.freeTable')} · {t('pick.inRoom', { n: room.players.length })}
         </p>
         <p className="text-xs font-bold text-amber-300">
           {t('pick.count', { n: myCartelas.length, max: maxCartelas })}
@@ -917,6 +918,11 @@ function WinModal({ over, myId, onAgain, onLeave }) {
               {w.full ? t('win.full') : isCorners(w.line) ? t('win.corners') : t('win.line')}
               {w.prize > 0 ? ` | ${t('win.prize', { amount: etb(w.prize) })}` : ''}
             </p>
+            {w.numbers?.length > 0 && !w.full && (
+              <p className="mt-1 text-xs text-slate-300">
+                {t('win.numbers', { numbers: w.numbers.map((n) => `${letterFor(n)}-${n}`).join(' · '), call: w.call ?? over.called.length })}
+              </p>
+            )}
             {iWon && <p className="text-sm text-lime-400 font-bold">{t('win.you')}</p>}
           </>
         )}

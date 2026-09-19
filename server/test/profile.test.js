@@ -69,7 +69,9 @@ test('a room reports its participants and winner to the stats hook', () => {
   const r = rounds[0];
   assert.deepEqual([r.participants, r.winnerId, r.prize, r.stake, r.stakes, r.houseTake, r.room, r.round], [[1, 2], 2, 16, 10, 20, 4, 'STAT', 1]);
   assert.deepEqual(r.players.map((p) => [p.id, p.name, p.cartela, p.marked]), [[1, 'A', 1, 0], [2, 'B', 2, 0]]);
-  assert.deepEqual(r.winner, { id: 2, name: 'B', cartela: 2, full: true, line: null });
+  assert.deepEqual([r.winner.id, r.winner.name, r.winner.cartela, r.winner.full, r.winner.line], [2, 'B', 2, true, null]);
+  assert.equal(r.winner.numbers.length, 24); // a full card: every number on it is the proof
+  assert.ok(Array.isArray(r.called));
   assert.equal(r.numbersCalled, 1);
   assert.equal(typeof r.startedAt, 'number');
   room.destroy();

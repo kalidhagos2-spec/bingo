@@ -98,6 +98,11 @@ tg-bingo/
   demo share underneath), *Prize* (stakes less the house cut) and *House* (real money only). A
   player who leaves mid-round forfeits the stake but stays in the round's record ("left
   mid-round"), and is refunded like everyone else if a demo player, or nobody, wins.
+- **Every win is proven by the balls.** A BINGO claim is accepted only when every number of the
+  winning line was called (checked against the balls themselves, not just the marks). Each round
+  stores the balls in calling order (`rounds.called`) and the winning numbers (`winner.numbers`);
+  **Admin → Games** shows them with the call each came out on, and the win screen shows players
+  the winning numbers and the call the game ended on.
 - **A blank board between rounds.** The previous round's numbers are cleared when registration
   re-opens, so the board behind the countdown never looks like the draw to come. (The draw
   order exists only on the server and is never sent to phones.)

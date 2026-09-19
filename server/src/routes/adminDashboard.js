@@ -230,12 +230,23 @@ function toggleRound(row) {
   if (next && next.classList.contains('ledger')) return next.remove();
   const r = loadGames.rounds[Number(row.dataset.round)];
   const tr = document.createElement('tr'); tr.className = 'ledger';
-  tr.innerHTML = '<td colspan="12" style="white-space:normal;background:#0a1a5c"><table>' + r.players.map((p) =>
+  tr.innerHTML = '<td colspan="12" style="white-space:normal;background:#0a1a5c">' + winProof(r) + '<table>' + r.players.map((p) =>
     '<tr><td>' + p.id + '</td><td>' + esc(p.name) + demoTag(p.id) + (r.winner && r.winner.id === p.id ? ' 🏆' : '') + (p.left ? ' <span class="rejected">left mid-round</span>' : '') + '</td><td>cartela ' + ((p.cartelas && p.cartelas.length ? p.cartelas.join(', ') : p.cartela) ?? '?') + '</td><td>' + (p.marked ?? '?') + '/24 marked</td></tr>').join('') + '</table></td>';
   row.after(tr);
 }
 
 const LETTER = (n) => 'BINGO'[Math.floor((n - 1) / 15)] + '-' + n;
+
+// The proof of a win: the numbers of the winning line, each with the call it came out on.
+function winProof(r) {
+  if (!r.winner || !r.winner.numbers || !r.called) return '';
+  const at = (n) => r.called.indexOf(n) + 1;
+  const all = r.winner.numbers.every((n) => at(n) > 0);
+  return '<p style="margin:6px 4px"><b>' + esc(r.winner.name) + '</b> · cartela ' + r.winner.cartela + ' · ' + (r.winner.full ? 'full card' : 'winning numbers') + ': ' +
+    r.winner.numbers.map((n) => '<code>' + LETTER(n) + '</code> <span class="muted">(call ' + (at(n) || '?') + ')</span>').join(' · ') +
+    ' · ' + (all ? '<span class="paid">all called ✔</span>' : '<span class="rejected">NOT ALL CALLED</span>') +
+    '<br><span class="muted">Balls in order (' + r.called.length + '): ' + r.called.map(LETTER).join(' ') + '</span></p>';
+}
 
 async function loadRooms() {
   const { rooms, now } = await api('/api/admin/rooms');

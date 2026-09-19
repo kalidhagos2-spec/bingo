@@ -66,6 +66,7 @@ export function createDemoBots({
   // (0.9 = nine for every one of theirs). Every cartela keeps exactly the same chance in the
   // draw, so this sets how often a demo player wins without touching the game itself. 0 = off.
   share = 0,
+  churn = 0.15, // chance a demo player gets up between rounds at a table of demo players
   tickMs = 700,
   onChange = () => {},
   rng = Math.random,
@@ -100,7 +101,7 @@ export function createDemoBots({
       }
       taken.add(name);
       if (store && store.balance(id) < minBalance) store.adjust(id, int(minBalance, maxBalance), 'Demo balance');
-      bots.push({ id, name, nextAt: now() + between(1000, Math.min(90_000, 4000 + i * 2500)), wants: 1, nextPickAt: 0, planned: null, marks: new Map(), claimAt: null });
+      bots.push({ id, name, nextAt: now() + between(1000, 20_000), wants: 1, nextPickAt: 0, planned: null, marks: new Map(), claimAt: null });
     }
     rollCrowd(now());
     if (count > 0) log(`[demo] ${minCount === count ? count : `${minCount}-${count}`} demo player(s), ${active} around now: ${bots.map((b) => b.name).join(', ')}`);
@@ -147,7 +148,11 @@ export function createDemoBots({
     bot.planned = `${room.code}:${room.round}`;
     bot.marks.clear();
     bot.claimAt = null;
-    if (!justArrived && humanCount(room) === 0 && (rng() < 0.35 || !isAround(bot))) return void leave(bot, t);
+    if (!justArrived && humanCount(room) === 0) {
+      // A real player's table that is short of company comes first: go there now.
+      if (shortTable()) return void leave(bot, t, 0);
+      if (rng() < churn || !isAround(bot)) return void leave(bot, t);
+    }
     const roll = rng();
     bot.wants = Math.min(room.rules.maxCartelas, roll < 0.55 ? 1 : roll < 0.85 ? 2 : 3);
     bot.nextPickAt = t + between(1500, 6000);
@@ -155,11 +160,14 @@ export function createDemoBots({
 
   const isAround = (bot) => bots.indexOf(bot) < active;
 
-  function leave(bot, t) {
+  function leave(bot, t, wait = between(4000, 25000)) {
     manager.leave(bot.id);
     bot.planned = null;
-    bot.nextAt = t + between(4000, 25000);
+    bot.nextAt = t + wait;
   }
+
+  /** A table with a real player at it that still has demo seats to fill. */
+  const shortTable = () => [...manager.rooms.values()].find((r) => !r.isPrivate && r.canJoin() && humanCount(r) > 0 && demoCount(r) < seatsFor(r));
 
   const ticketsOf = (room, demo) => [...room.players.values()].filter((p) => isDemoId(p.id) === demo).reduce((n, p) => n + p.cards.length, 0);
 

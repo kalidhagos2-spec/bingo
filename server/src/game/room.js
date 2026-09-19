@@ -310,7 +310,12 @@ export class Room {
       );
     }
     const card = player.cards.find((c) => c.cartela === chosen.cartela);
-    this.finish(player, chosen.pattern ?? completedLines(card.marks)[0] ?? null, chosen.full, card);
+    const line = chosen.pattern ?? completedLines(card.marks)[0] ?? null;
+    // Belt and braces: marks can only be set for called numbers, and the win is checked once
+    // more against the balls themselves before any money moves.
+    const unproven = winningNumbers(card, line, chosen.full).filter((n) => !this.called.includes(n));
+    if (unproven.length) throw new Error(`Not yet: ${unproven.join(', ')} ${unproven.length === 1 ? 'has' : 'have'} not been called`);
+    this.finish(player, line, chosen.full, card);
     return p;
   }
 
@@ -319,7 +324,7 @@ export class Room {
     this.clearTimer();
     this.phase = PHASE.FINISHED;
     if (player) {
-      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks };
+      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks, numbers: winningNumbers(card, line, full), call: this.called.length };
       if (this.pool > 0) this.wallet?.credit(player.id, this.pool, `Prize for room ${this.code}`);
       // A demo player's win costs the real players nothing: their stakes for this round go back.
       // That includes a real player who left or lost their connection before the end.
@@ -343,7 +348,8 @@ export class Room {
       participants,
       players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p), ...(p.left ? { left: true } : {}) })),
       winnerId: player?.id ?? null,
-      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, ...(demoWin ? { demo: true } : {}) } : null,
+      winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, numbers: winningNumbers(card, line, full), ...(demoWin ? { demo: true } : {}) } : null,
+      called: [...this.called], // the balls in the order they came out: the proof of the win
       prize: player ? this.pool : 0,
       stake: this.stake,
       stakes: player ? stakes : 0, // no winner: everything was refunded
@@ -454,6 +460,12 @@ export class Room {
   broadcast() {
     this.emit('room:state', this.publicState());
   }
+}
+
+/** The numbers that make the win: the cells of the winning line (or the whole card), the free centre left out. */
+function winningNumbers(card, line = null, full = false) {
+  const cells = full ? card.cells : (line ?? []).map((i) => card.cells[i]);
+  return cells.map((c) => c.value).filter((v) => v !== null);
 }
 
 /** Numbers marked across all of a player's cartelas (the free centre excluded). */

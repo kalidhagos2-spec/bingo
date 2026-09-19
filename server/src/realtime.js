@@ -14,10 +14,29 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   const io = new Server(httpServer, { path: '/socket.io', cors: { origin: allowedOrigins.length ? allowedOrigins : false } });
 
   const emitTo = (userId, event, payload) => io.to(userChannel(userId)).emit(event, payload);
+  // Table state is the big message (every player and their cartelas), and a full table changes
+  // many times a second while people pick. A change of phase goes out at once; everything else
+  // is sent at most every STATE_MS, always the latest state. (The player who acted already has
+  // it: their own request is answered with the new state directly.)
+  const stateSlots = new Map(); // room code -> { phase, timer, payload }
   const emit = (code, event, payload) => {
-    io.to(roomChannel(code)).emit(event, payload);
-    // Any room change may alter the lobby list (players, countdown, pool), so refresh it for everyone.
-    if (event === 'room:state') lobbySoon();
+    if (event !== 'room:state') return void io.to(roomChannel(code)).emit(event, payload);
+    lobbySoon(); // any room change may alter the lobby list (players, countdown, pool)
+    const slot = stateSlots.get(code) ?? { phase: null, timer: null, payload: null };
+    stateSlots.set(code, slot);
+    slot.payload = payload;
+    if (payload.phase !== slot.phase) {
+      slot.phase = payload.phase;
+      clearTimeout(slot.timer);
+      slot.timer = null;
+      io.to(roomChannel(code)).emit(event, payload);
+      return;
+    }
+    slot.timer ??= setTimeout(() => {
+      slot.timer = null;
+      io.to(roomChannel(code)).emit('room:state', slot.payload);
+      if (!manager.rooms.has(code)) stateSlots.delete(code);
+    }, STATE_MS).unref();
   };
 
   // The lobby list goes to every connected player. Room changes come in bursts (picks during
@@ -239,6 +258,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
 }
 
 const LOBBY_MS = 500;
+const STATE_MS = 700;
 const MARKS_FLUSH_MS = 5000;
 const roomChannel = (code) => `room:${code}`;
 const userChannel = (id) => `user:${id}`;

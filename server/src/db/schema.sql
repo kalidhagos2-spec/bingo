@@ -84,6 +84,9 @@ CREATE TABLE IF NOT EXISTS rounds (
 -- `stakes` is everything the pool was built from; `demo_stakes` is the part staked by house demo
 -- players (play money). `house_take` and the house ledger count real money only.
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS demo_stakes NUMERIC(14,2) NOT NULL DEFAULT 0;
+-- The balls of the round in calling order, so any win can be checked afterwards (winner.numbers
+-- must all be in here). NULL for rounds recorded before this column existed.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS called JSONB;
 CREATE INDEX IF NOT EXISTS rounds_at_idx ON rounds (at DESC);
 CREATE INDEX IF NOT EXISTS rounds_room_idx ON rounds (room);
 

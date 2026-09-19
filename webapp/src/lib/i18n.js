@@ -72,7 +72,7 @@ export const STRINGS = {
 
     // ----- pick screen -----
     'pick.registering': 'Registering · {ready}/{min} picked',
-    'pick.perCartela': '{amount} per cartela · prize {prize}',
+    'pick.perCartela': '{amount} per cartela · {n} cartelas in play · prize {prize}',
     'pick.inRoom': '{n} in room',
     'pick.count': '{n}/{max} cartelas picked',
     'pick.staked': '{amount} staked',
@@ -93,6 +93,8 @@ export const STRINGS = {
     'game.stat.prize': 'Prize',
     'game.stat.call': 'Call',
     'game.stat.players': 'Players',
+    'game.stat.playersCartelas': 'Players · Cartelas',
+    'game.nCartelas': '{n} cartelas',
     'game.free': 'Free',
     'game.callLabel': 'CALL',
     'game.previousCalls': 'Previous calls',
@@ -122,6 +124,7 @@ export const STRINGS = {
     'win.line': 'Line',
     'win.prize': '{amount} won',
     'win.you': 'That is you! 🏆',
+    'win.numbers': '{numbers} · on call {call}',
     'win.refunded': '{n} numbers were called. Stakes were refunded.',
     'win.again': 'Play Again',
     'win.leaveRoom': 'Leave room',
@@ -393,7 +396,7 @@ export const STRINGS = {
 
     // ----- pick screen -----
     'pick.registering': 'ምዝገባ · {ready}/{min} መርጠዋል',
-    'pick.perCartela': 'በካርቴላ {amount} · ሽልማት {prize}',
+    'pick.perCartela': 'በካርቴላ {amount} · {n} ካርቴላ በጨዋታ · ሽልማት {prize}',
     'pick.inRoom': '{n} ተጫዋች በክፍሉ',
     'pick.count': '{n}/{max} ካርቴላ ተመርጧል',
     'pick.staked': 'መደብ {amount}',
@@ -414,6 +417,8 @@ export const STRINGS = {
     'game.stat.prize': 'ሽልማት',
     'game.stat.call': 'ጥሪ',
     'game.stat.players': 'ተጫዋቾች',
+    'game.stat.playersCartelas': 'ተጫዋች · ካርቴላ',
+    'game.nCartelas': '{n} ካርቴላ',
     'game.free': 'ነፃ',
     'game.callLabel': 'ጥሪ',
     'game.previousCalls': 'ያለፉ ጥሪዎች',
@@ -443,6 +448,7 @@ export const STRINGS = {
     'win.line': 'መስመር',
     'win.prize': '{amount} ሽልማት',
     'win.you': 'እርስዎ አሸንፈዋል! 🏆',
+    'win.numbers': '{numbers} · በ{call}ኛው ጥሪ',
     'win.refunded': '{n} ቁጥሮች ተጠርተዋል። መደቡ ተመልሷል።',
     'win.again': 'እንደገና ይጫወቱ',
     'win.leaveRoom': 'ከክፍሉ ይውጡ',

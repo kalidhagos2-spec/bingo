@@ -256,7 +256,7 @@ export class PaymentStore {
    * Free Bingo win, updated in memory at once; the round record, house ledger and the
    * touched profiles are written to Postgres in the background, in one transaction.
    */
-  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, demoStakes = 0, realStakes = stakes, realPrize = prize, houseTake = 0, room = null, round = null, numbersCalled = null, startedAt = null, freeCoins = 0, now = Date.now() }) {
+  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, demoStakes = 0, realStakes = stakes, realPrize = prize, houseTake = 0, room = null, round = null, numbersCalled = null, called = null, startedAt = null, freeCoins = 0, now = Date.now() }) {
     const roundRow = {
       at: new Date(now),
       room,
@@ -269,6 +269,7 @@ export class PaymentStore {
       demoStakes,
       houseTake,
       numbersCalled,
+      called,
       durationMs: startedAt ? Math.max(0, now - startedAt) : null,
       freeCoins: stake === 0 && winnerId ? freeCoins : 0,
     };
@@ -288,9 +289,9 @@ export class PaymentStore {
     this._enqueue(() =>
       withTransaction(this.pool, async (client) => {
         await client.query(
-          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins, demo_stakes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins, roundRow.demoStakes],
+          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins, demo_stakes, called)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins, roundRow.demoStakes, roundRow.called ? JSON.stringify(roundRow.called) : null],
         );
         if (houseTake !== 0) { // negative: a real player won a pool that demo players had padded
           await client.query(`UPDATE house_balance SET balance = balance + $1 WHERE id = 1`, [houseTake]);
@@ -825,7 +826,7 @@ function roundFromRow(row) {
   return {
     at: row.at.toISOString(), room: row.room, round: row.round, stake: row.stake,
     players: row.players ?? [], winner: row.winner ?? null, prize: row.prize, stakes: row.stakes, demoStakes: row.demo_stakes ?? 0,
-    houseTake: row.house_take, numbersCalled: row.numbers_called, durationMs: row.duration_ms, freeCoins: row.free_coins,
+    houseTake: row.house_take, numbersCalled: row.numbers_called, called: row.called ?? null, durationMs: row.duration_ms, freeCoins: row.free_coins,
   };
 }
 
