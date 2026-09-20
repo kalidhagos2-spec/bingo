@@ -52,6 +52,25 @@ export function randomName(rng = Math.random) {
 /** Bumped when the name style changes, so existing demo players are renamed once at the next start. */
 const NAME_STYLE = 'demo_player_v2';
 
+/**
+ * Demo settings are short texts so the operator can type them in the dashboard:
+ *   "50"            one value                "40-50"          a range, drawn at random
+ *   "10=50,20=40"   a value per table stake  "30,50=20-25"    a default plus one exception
+ */
+export function forStake(text, stake = null) {
+  const items = String(text ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const own = items.find((item) => item.includes('=') && Number(item.split('=')[0]) === Number(stake));
+  if (own) return own.split('=')[1].trim();
+  return items.find((item) => !item.includes('=')) ?? '';
+}
+
+/** "40-50" -> { min: 40, max: 50 }; "50" -> { min: 50, max: 50 }; anything else -> { min: 0, max: 0 }. */
+export function parseRange(text) {
+  const [a, b = a] = String(text ?? '').split('-').map((s) => Number.parseInt(s.trim(), 10));
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) return { min: 0, max: 0 };
+  return { min: Math.min(a, b), max: Math.max(a, b) };
+}
+
 export function createDemoBots({
   manager,
   store = null,
@@ -68,6 +87,9 @@ export function createDemoBots({
   // draw, so this sets how often a demo player wins without touching the game itself. 0 = off.
   share = 0,
   churn = 0.15, // chance a demo player gets up between rounds at a table of demo players
+  // () => { count, perRoom, share } as texts (see forStake/parseRange): read on every beat, so the
+  // operator's settings take effect without a restart. Overrides the fixed values above.
+  live = null,
   tickMs = 700,
   onChange = () => {},
   rng = Math.random,
@@ -83,17 +105,39 @@ export function createDemoBots({
   let active = 0;
   const sizes = new Map(); // `${code}:${round}` -> how many players this table fills to in that round
   let crowdUntil = 0;
+
+  // The settings in force right now.
+  const spec = () => {
+    const l = live?.() ?? {};
+    return { count: String(l.count ?? `${minCount}-${count}`), perRoom: String(l.perRoom ?? `${minPerRoom}-${perRoom}`), share: String(l.share ?? share) };
+  };
+  const crowdRange = () => parseRange(forStake(spec().count));
+  const tableRange = (stake) => parseRange(forStake(spec().perRoom, stake));
+  const shareAt = (stake) => Math.min(0.95, Math.max(0, Number(forStake(spec().share, stake)) || 0));
+  const biggestTable = () => Math.max(0, ...stakes.map((stake) => tableRange(stake).max));
+
+  let lastSpec = '';
+  let growing = null;
   function rollCrowd(t) {
-    if (t < crowdUntil) return;
+    const current = JSON.stringify(spec());
+    if (current !== lastSpec) {
+      lastSpec = current; // the operator changed something: re-roll now, and resize tables next round
+      crowdUntil = 0;
+      sizes.clear();
+    }
+    const { min, max } = crowdRange();
+    if (max > bots.length && !growing) growing = setup(max).finally(() => (growing = null));
+    if (t < crowdUntil) return void (active = Math.min(active, bots.length));
     for (const key of sizes.keys()) if (!manager.rooms.has(key.split(':')[0])) sizes.delete(key); // tables that closed
-    active = int(Math.min(minCount, count), count);
+    active = Math.min(int(min, max), bots.length);
     crowdUntil = t + between(crowdMs[0], crowdMs[1]);
   }
 
   /** Profiles and play-money wallets are kept in the store, so names and balances survive restarts. */
-  async function setup() {
-    const taken = new Set();
-    for (let i = 1; i <= count; i++) {
+  async function setup(upTo = crowdRange().max) {
+    const taken = new Set(bots.map((b) => b.name));
+    const first = bots.length + 1;
+    for (let i = first; i <= upTo; i++) {
       const id = DEMO_ID_BASE - i;
       const saved = store?.profile(id);
       let name = saved?.username === NAME_STYLE ? saved.name : null; // the username doubles as the style marker (and tells the operator what this account is)
@@ -106,8 +150,7 @@ export function createDemoBots({
       if (store && store.balance(id) < minBalance) store.adjust(id, int(minBalance, maxBalance), 'Demo balance');
       bots.push({ id, name, nextAt: now() + between(1000, 20_000), wants: 1, nextPickAt: 0, planned: null, marks: new Map(), claimAt: null });
     }
-    rollCrowd(now());
-    if (count > 0) log(`[demo] ${minCount === count ? count : `${minCount}-${count}`} demo player(s), ${active} around now: ${bots.map((b) => b.name).join(', ')}`);
+    if (upTo >= first) log(`[demo] ${bots.length} demo player(s) (settings: ${spec().count} in all, ${spec().perRoom} per table, share ${spec().share}): ${bots.slice(first - 1).map((b) => b.name).join(', ')}`);
   }
 
   const demoCount = (room) => [...room.players.keys()].filter(isDemoId).length;
@@ -126,7 +169,7 @@ export function createDemoBots({
     const withPeople = open.filter((r) => humanCount(r) > 0);
     if (withPeople.length) return { room: withPeople.reduce((a, b) => (demoCount(b) < demoCount(a) ? b : a)) };
     const busyAlone = bots.filter((b) => b !== bot && manager.roomOf(b.id) && humanCount(manager.roomOf(b.id)) === 0).length;
-    const reserve = Math.min(perRoom, Math.ceil(active / 4));
+    const reserve = Math.min(biggestTable(), Math.ceil(active / 4));
     if (busyAlone >= active - reserve) return null;
     if (open.length) return { room: open.reduce((a, b) => (b.players.size < a.players.size ? b : a)) }; // the emptiest fills first
     const free = stakes.filter((stake) => !tables.some((r) => r.stake === stake && humanCount(r) === 0));
@@ -178,9 +221,10 @@ export function createDemoBots({
 
   /** Cartelas the demo players at this table still need to reach their share of it (0 when `share` is off or nobody real has picked). */
   function shortOfShare(room) {
-    if (!(share > 0 && share < 1)) return 0;
+    const want = shareAt(room.stake);
+    if (!(want > 0 && want < 1)) return 0;
     const real = ticketsOf(room, false);
-    return real === 0 ? 0 : Math.max(0, Math.ceil((share / (1 - share)) * real) - ticketsOf(room, true));
+    return real === 0 ? 0 : Math.max(0, Math.ceil((want / (1 - want)) * real) - ticketsOf(room, true));
   }
 
   /** How full this table gets this round: a number between `minPerRoom` and `perRoom`, drawn once per table and round. */
@@ -188,7 +232,8 @@ export function createDemoBots({
     const key = `${room.code}:${room.round}`;
     if (!sizes.has(key)) {
       for (const old of sizes.keys()) if (old.startsWith(`${room.code}:`)) sizes.delete(old);
-      sizes.set(key, int(Math.min(minPerRoom, perRoom), perRoom));
+      const { min, max } = tableRange(room.stake);
+      sizes.set(key, int(min, max));
     }
     return sizes.get(key);
   }
@@ -266,7 +311,9 @@ export function createDemoBots({
     },
     async start() {
       await setup();
-      if (count > 0) {
+      rollCrowd(now());
+      // With live settings the beat always runs, so switching demo players on in the dashboard works.
+      if (live || bots.length > 0) {
         timer = setInterval(tick, tickMs);
         timer.unref?.();
       }

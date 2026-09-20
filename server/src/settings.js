@@ -5,7 +5,8 @@
  */
 
 export const SCHEMA = Object.freeze([
-  { key: 'houseCutPercent', group: 'Fees', label: 'House cut of every stake (%)', min: 0, max: 50, step: 0.5, scope: 'game' },
+  { key: 'houseCutPercent', group: 'Prize', label: 'House cut of every stake (%). The prize is the rest: stake x cartelas less this cut', min: 0, max: 50, step: 0.5, scope: 'game' },
+  { key: 'maxPrize', group: 'Prize', label: 'Largest prize of one round (ETB). The prize never goes above this, however many cartelas are in play', min: 10, max: 1_000_000, step: 1, scope: 'game' },
   { key: 'depositFeePercent', group: 'Fees', label: 'Deposit (top-up) fee (%)', min: 0, max: 20, step: 0.5, scope: 'root' },
   { key: 'withdrawFeePercent', group: 'Fees', label: 'Cash-out fee (%)', min: 0, max: 20, step: 0.5, scope: 'root' },
   { key: 'minTopup', group: 'Limits', label: 'Minimum top-up (ETB)', min: 1, max: 1_000_000, step: 1, scope: 'root' },
@@ -14,11 +15,15 @@ export const SCHEMA = Object.freeze([
   { key: 'maxWithdraw', group: 'Limits', label: 'Maximum cash-out (ETB)', min: 1, max: 1_000_000, step: 1, scope: 'root' },
   { key: 'stakes', group: 'Tables', label: 'Public tables by stake (ETB, comma separated, 0 = free)', scope: 'stakes' },
   { key: 'freeBingoCoins', group: 'Tables', label: 'Coins paid to a Free Bingo winner', min: 0, max: 10_000, step: 1, scope: 'game' },
-  { key: 'minPlayers', group: 'Tables', label: 'Players needed to start a round', min: 2, max: 50, step: 1, scope: 'game' },
-  { key: 'maxPlayers', group: 'Tables', label: 'Seats per table', min: 2, max: 50, step: 1, scope: 'game' },
+  { key: 'minPlayers', group: 'Tables', label: 'Players needed to start a round', min: 2, max: 100, step: 1, scope: 'game' },
+  { key: 'maxPlayers', group: 'Tables', label: 'Seats per table (keep a few above the demo table size, so real players always find a seat)', min: 2, max: 120, step: 1, scope: 'game' },
   { key: 'countdownMs', group: 'Pacing', label: 'Cartela pick time (ms)', min: 10_000, max: 300_000, step: 1000, scope: 'game' },
   { key: 'callIntervalMs', group: 'Pacing', label: 'Seconds between calls (ms)', min: 1000, max: 30_000, step: 500, scope: 'game' },
   { key: 'restartDelayMs', group: 'Pacing', label: 'Pause before registration re-opens (ms)', min: 3000, max: 60_000, step: 1000, scope: 'game' },
+  // Demo players (demoBots.js). Texts: one value "50", a range "40-50", or per table stake "10=50,20=40,50=30".
+  { key: 'demoCount', group: 'Demo players', label: 'Demo players in all (0 = off; a range such as 150-200 drifts at random). About (number of tables + 1) x table size', scope: 'demo', field: 'count', kind: 'count', placeholder: '200' },
+  { key: 'demoPerRoom', group: 'Demo players', label: 'Players each game is filled to, real players included. One value, a range, or per table: 10=50,20=40,50=30', scope: 'demo', field: 'perRoom', kind: 'size', placeholder: '50' },
+  { key: 'demoShare', group: 'Demo players', label: 'Demo win rate next to real players, 0 to 0.95 (0.9 = they win about 9 games in 10; 0 = off). One value or per table: 10=0.5,50=0.9. It works only by how many cartelas they buy: the draw is never touched, and a real player is refunded when a demo player wins', scope: 'demo', field: 'share', kind: 'share', placeholder: '0' },
   // Each house-account slot edits one entry of the comma-separated HOUSE_*_ACCOUNT / _NAME lists.
   { key: 'telebirrAccount', group: 'House accounts', label: 'Telebirr account 1 — phone number players transfer to', scope: 'account', method: 'telebirr', field: 'account', index: 0 },
   { key: 'telebirrName', group: 'House accounts', label: 'Telebirr account 1 — account holder name', scope: 'account', method: 'telebirr', field: 'name', index: 0 },
@@ -31,6 +36,29 @@ export const SCHEMA = Object.freeze([
 const num = (v) => (typeof v === 'string' ? Number(v.trim()) : Number(v));
 /** Splits a comma-separated house-account list into its slots. */
 const slots = (text) => String(text ?? '').split(',').map((s) => s.trim());
+
+/** Checks one demo setting ("50", "40-50", "10=50,20=40-45") and returns it tidied up. */
+function demoText(field, raw) {
+  const short = { count: 'Demo players in all', size: 'Players per game', share: 'Demo win rate' }[field.kind];
+  const text = String(raw ?? '').replace(/\s+/g, '');
+  if (text === '') return '0';
+  const items = text.split(',');
+  if (items.length > 9) throw new Error(`${short}: too many entries`);
+  for (const item of items) {
+    const [left, right] = item.includes('=') ? item.split('=') : [null, item];
+    if (left !== null && (field.kind === 'count' || !/^\d+$/.test(left))) throw new Error(`${short}: "${item}" is not valid. ${field.kind === 'count' ? 'Use one number or a range, e.g. 200 or 150-200' : 'Write the table stake before the =, e.g. 10=50'}`);
+    if (field.kind === 'share') {
+      const v = Number(right);
+      if (!/^\d*\.?\d+$/.test(right) || !(v >= 0 && v <= 0.95)) throw new Error(`${short}: "${right}" must be between 0 and 0.95 (0.9 = nine games in ten)`);
+      continue;
+    }
+    if (!/^\d+(-\d+)?$/.test(right)) throw new Error(`${short}: "${right}" must be a whole number or a range such as 40-50`);
+    const biggest = Math.max(...right.split('-').map(Number));
+    const limit = field.kind === 'count' ? 600 : 100;
+    if (biggest > limit) throw new Error(`${short}: at most ${limit}`);
+  }
+  return items.join(',');
+}
 
 /** Validates a partial patch against the schema; returns the normalised values or throws. */
 export function validate(patch, current) {
@@ -46,6 +74,10 @@ export function validate(patch, current) {
       if (field.field === 'name' && text && /^[\d\s,+.-]+$/.test(text)) throw new Error(`${short}: enter the account holder's name (e.g. Aman), not a number`);
       if (field.field === 'account' && text && !/^\+?\d{6,15}$/.test(text)) throw new Error(`${short}: enter one phone or account number, digits only`);
       next[field.key] = text;
+      continue;
+    }
+    if (field.scope === 'demo') {
+      next[field.key] = demoText(field, raw);
       continue;
     }
     if (field.scope === 'stakes') {
@@ -77,6 +109,7 @@ export function createSettings({ config, store, manager = null }) {
     for (const f of SCHEMA) {
       if (f.scope === 'game') out[f.key] = c.game[f.key];
       else if (f.scope === 'stakes') out[f.key] = [...c.stakes];
+      else if (f.scope === 'demo') out[f.key] = String(c.demoBots?.[f.field] ?? '0');
       else if (f.scope === 'account') out[f.key] = slots(c.houseAccounts?.[f.method]?.[f.field])[f.index ?? 0] ?? '';
       else out[f.key] = c[f.key];
     }
@@ -99,6 +132,7 @@ export function createSettings({ config, store, manager = null }) {
       if (!(f.key in values)) continue;
       if (f.scope === 'game') config.game[f.key] = values[f.key];
       else if (f.scope === 'root') config[f.key] = values[f.key];
+      else if (f.scope === 'demo') (config.demoBots ??= {})[f.field] = values[f.key]; // demoBots.js reads this on its next beat
       else if (f.scope === 'account') setSlot(f.method, f.field, f.index ?? 0, values[f.key]);
     }
     if (values.stakes) config.stakes.splice(0, config.stakes.length, ...values.stakes);

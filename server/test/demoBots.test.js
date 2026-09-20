@@ -85,7 +85,7 @@ test('demo players sit down, pick cartelas, mark and call BINGO by themselves', 
   }, () => room.phase === PHASE.FINISHED);
   assert.ok(isDemoId(room.winner.id));
   assert.ok(store.ledger.some((l) => l.id === room.winner.id && /Prize/.test(l.note)));
-  assert.deepEqual(errors.filter((e) => !e.includes('around now')), []); // only the start-up line was logged
+  assert.deepEqual(errors.filter((e) => !e.includes('demo player(s)')), []); // only the start-up line was logged
   manager.shutdown();
 });
 
@@ -462,4 +462,54 @@ test('DEMO_BOTS_PER_ROOM takes a range: a table fills to a random size in it, dr
   }
   assert.ok(new Set(seen).size >= 3, `sizes ${seen.join(',')}`); // it really varies
   manager.shutdown();
+});
+
+test('live settings: demo players are switched on, resized per table, and switched off from the dashboard', async () => {
+  const store = fakeStore();
+  const wallet = { charge: (id, amount, note) => store.adjust(id, -amount, note) !== null, credit: (id, amount, note) => void store.adjust(id, amount, note) };
+  const manager = new RoomManager({ emit() {}, emitTo() {}, wallet, stakes: [10, 20], isDemo: isDemoId, rules: { minPlayers: 2, maxPlayers: 60, countdownMs: 3_600_000, callIntervalMs: 3_600_000, restartDelayMs: 3_600_000 } });
+  const settings = { count: '0', perRoom: '3', share: '0' };
+  let clock = 30_000_000;
+  const bots = createDemoBots({ manager, store, stakes: [10, 20], live: () => settings, crowdMs: [60_000, 60_000], now: () => clock, log() {} });
+  await bots.start();
+  bots.stop();
+  const tick = async (n) => {
+    for (let i = 0; i < n; i++) {
+      clock += 1000;
+      bots.tick();
+      await new Promise((r) => setImmediate(r)); // lets newly created demo players finish signing up
+    }
+  };
+  await tick(20);
+  assert.equal(manager.rooms.size, 0); // off
+
+  Object.assign(settings, { count: '150', perRoom: '10=50,20=12' }); // the operator saves new settings
+  await tick(90);
+  const size = (stake) => [...manager.rooms.values()].find((r) => r.stake === stake)?.players.size;
+  assert.equal(size(10), 50);
+  assert.equal(size(20), 12);
+
+  settings.count = '0'; // switched off: nobody sits down again once their table re-opens
+  await tick(5);
+  for (const room of manager.rooms.values()) {
+    room.start();
+    room.finish(null);
+    room.reopen();
+  }
+  await tick(30);
+  assert.equal([...manager.rooms.values()].reduce((n, r) => n + r.players.size, 0), 0);
+  manager.shutdown();
+});
+
+test('forStake and parseRange read the operator texts', async () => {
+  const { forStake, parseRange } = await import('../src/demoBots.js');
+  assert.equal(forStake('50', 10), '50');
+  assert.equal(forStake('10=50,20=40', 20), '40');
+  assert.equal(forStake('30,50=20-25', 50), '20-25');
+  assert.equal(forStake('30,50=20-25', 10), '30');
+  assert.equal(forStake('10=50', 20), ''); // no entry and no default: nothing for that table
+  assert.deepEqual(parseRange('40-50'), { min: 40, max: 50 });
+  assert.deepEqual(parseRange('50-40'), { min: 40, max: 50 });
+  assert.deepEqual(parseRange('7'), { min: 7, max: 7 });
+  assert.deepEqual(parseRange(''), { min: 0, max: 0 });
 });

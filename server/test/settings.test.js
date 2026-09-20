@@ -33,13 +33,13 @@ test('validation rejects out-of-range, non-integer and inconsistent values', () 
   assert.throws(() => validate({ houseCutPercent: 80 }, current), /between 0 and 50/);
   assert.throws(() => validate({ minPlayers: 2.5 }, current), /whole number/);
   assert.throws(() => validate({ maxTopup: 5 }, current), /at least the minimum/);
-  assert.throws(() => validate({ maxPlayers: 1 }, current), /between 2 and 50/);
+  assert.throws(() => validate({ maxPlayers: 1 }, current), /between 2 and 120/);
   assert.throws(() => validate({ minPlayers: 9 }, current), /Seats per table/);
   assert.throws(() => validate({ stakes: 'a,b' }, current), /Stakes must be/);
   assert.throws(() => validate({ stakes: '0,-5' }, current), /Stakes must be/);
   assert.deepEqual(validate({ stakes: ' 50, 0,10,10 ', houseCutPercent: '2.5' }, current), { stakes: [0, 10, 50], houseCutPercent: 2.5 });
   assert.deepEqual(validate({ unknown: 1 }, current), {}); // unknown keys are ignored
-  assert.equal(SCHEMA.length, 20);
+  assert.equal(SCHEMA.length, 24); // + maxPrize and the three demo-player settings
   assert.deepEqual(validate({ boaAccount: ' 1000000000 ' }, current), { boaAccount: '1000000000' });
   assert.throws(() => validate({ boaName: 'x'.repeat(61) }, current), /at most 60/);
   // House accounts: one number per slot, names must be names, numbers must be numbers.
@@ -99,4 +99,34 @@ test('updates apply live to config, store fees, lobby stakes and existing rooms,
   assert.deepEqual(settings.overrides(), {});
   await assert.rejects(() => settings.update({ maxWithdraw: 1 }), /at least the minimum/);
   for (const r of manager.rooms.values()) r.destroy();
+});
+
+test('demo players and the prize are operator settings, applied live and kept across restarts', async (t) => {
+  const { store, config, settings } = await setup(t);
+  config.game.maxPrize = 3000;
+  assert.equal(settings.values().demoCount, '0'); // off until the operator turns it on
+
+  const saved = await settings.update({ demoCount: ' 150 - 200 ', demoPerRoom: '50, 50=30-40', demoShare: '10=0.5,50=0.9', maxPrize: '5000', houseCutPercent: 25, maxPlayers: 55 });
+  assert.deepEqual([saved.demoCount, saved.demoPerRoom, saved.demoShare], ['150-200', '50,50=30-40', '10=0.5,50=0.9']);
+  assert.deepEqual(config.demoBots, { count: '150-200', perRoom: '50,50=30-40', share: '10=0.5,50=0.9' }); // what demoBots.js reads on its next beat
+  assert.equal(config.game.maxPrize, 5000);
+  assert.equal(config.game.houseCutPercent, 25);
+
+  // a fresh process picks the overrides up again
+  const config2 = fakeConfig();
+  createSettings({ config: config2, store, manager: null });
+  assert.equal(config2.demoBots.perRoom, '50,50=30-40');
+
+  for (const [patch, pattern] of [
+    [{ demoCount: '10=50' }, /one number or a range/],
+    [{ demoCount: '900' }, /at most 600/],
+    [{ demoPerRoom: 'fifty' }, /whole number or a range/],
+    [{ demoPerRoom: '10=500' }, /at most 100/],
+    [{ demoShare: '1' }, /between 0 and 0.95/],
+    [{ demoShare: 'x=0.5' }, /table stake before the =/],
+    [{ maxPrize: 5 }, /between 10 and/],
+  ]) await assert.rejects(() => settings.update(patch), pattern);
+  assert.equal(config.demoBots.count, '150-200'); // a refused change leaves everything as it was
+
+  assert.equal((await settings.update({ demoCount: '' })).demoCount, '0'); // emptied = off
 });

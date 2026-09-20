@@ -80,14 +80,15 @@ export const config = {
   demoBots: {
     // A number ("6") or a range ("20-30"): with a range, how many are around drifts at random
     // between the two, like a real crowd through the day.
-    ...demoRange(env('DEMO_BOTS', '0')),
+    // All three are kept as the texts the operator types (dashboard > Settings > Demo players) and
+    // read live by demoBots.js: "50", a range "40-50", or per table stake "10=50,20=40,50=30".
+    count: env('DEMO_BOTS', '0'),
     minBalance: num('DEMO_BOTS_MIN_BALANCE', 50),
     maxBalance: num('DEMO_BOTS_MAX_BALANCE', 500),
-    /** Players a table is filled to. A range ("20-30") gives every table its own random size, drawn anew each round. */
-    perRoom: demoRange(env('DEMO_BOTS_PER_ROOM', '3')).count,
-    minPerRoom: demoRange(env('DEMO_BOTS_PER_ROOM', '3')).minCount,
+    /** Players a table is filled to (real players included). */
+    perRoom: env('DEMO_BOTS_PER_ROOM', '3'),
     /** Share of the cartelas at a table with real players that demo players aim to hold: 0.9 = 9 to 1. 0 = off. */
-    share: num('DEMO_BOTS_SHARE', 0),
+    share: env('DEMO_BOTS_SHARE', '0'),
   },
 
   /** Multiplayer room rules; see game/room.js DEFAULT_RULES for defaults. */

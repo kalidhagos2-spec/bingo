@@ -61,7 +61,15 @@ const { io, manager, kick, closeRoom, broadcastSoon } = attachRealtime(httpServe
 });
 
 // Demo players (DEMO_BOTS > 0): house bots that sit at the public tables and play like people.
-const demoBots = await createDemoBots({ manager, store, stakes: config.stakes, ...config.demoBots, onChange: broadcastSoon }).start();
+const demoBots = await createDemoBots({
+  manager,
+  store,
+  stakes: config.stakes,
+  minBalance: config.demoBots.minBalance,
+  maxBalance: config.demoBots.maxBalance,
+  live: () => config.demoBots, // edited in the dashboard, applied on the next beat
+  onChange: broadcastSoon,
+}).start();
 
 app.get('/api/health', async (_req, res) => {
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM transactions');

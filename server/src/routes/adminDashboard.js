@@ -313,6 +313,7 @@ async function loadSettings() {
       // Stakes and house accounts are text (comma-separated lists, names); everything else is a number.
       '<input data-setting="' + f.key + '" value="' + esc(show(v)) + '"' +
       (f.scope === 'stakes' ? ' type="text" placeholder="10,20,50"'
+        : f.scope === 'demo' ? ' type="text" placeholder="' + esc(f.placeholder ?? '') + '" autocomplete="off"'
         : f.scope === 'account' ? ' type="text" placeholder="' + (f.field === 'name' ? 'Aman,Kalid' : '0937766034,0960524040') + '" autocomplete="off"'
         : ' type="number" min="' + f.min + '" max="' + f.max + '" step="' + f.step + '"') +
       ' style="width:100%;margin-top:3px"></label>';

@@ -90,6 +90,13 @@ tg-bingo/
   towards it; set `MAX_PLAYERS` a few above, e.g. 34, so real players always find a seat). There is
   one demo table per stake, and one table's worth of demo players stays free to fill a table a
   real player opens, so `DEMO_BOTS` should be about (stakes + 1) × table size, e.g. 120.
+  **Operator settings (Admin → Settings, applied live, no restart):** *Demo players in all*
+  (`0` = off, `200`, or a range `150-200`), *Players each game is filled to* (`50`, a range
+  `40-50`, or per table stake `10=50,20=40,50=30`) and *Demo win rate* (`0`–`0.95`, also per
+  table: `10=0.5,50=0.9`), which works only through how many cartelas demo players buy. The
+  **Prize** group holds the house cut (%) and the largest prize of one round. The `.env` values
+  (`DEMO_BOTS`, `DEMO_BOTS_PER_ROOM`, `DEMO_BOTS_SHARE`, `HOUSE_CUT_PERCENT`, `MAX_PRIZE`) are
+  the defaults the dashboard starts from.
   Names are Ethiopian given names in Latin or Ge'ez script, many with an emoji (`randomName`).
   `DEMO_BOTS_SHARE=0.9` makes demo players hold about nine cartelas for each one a real player
   holds at the same table, so they win about nine rounds in ten there. It works only through
