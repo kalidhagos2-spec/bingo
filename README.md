@@ -446,62 +446,60 @@ the Mini App URL in @BotFather (`/setmenubutton` → `https://bingo.example.com`
 deposits, put the `HOUSE_*_ACCOUNT` numbers (and any gateway credentials) in `server/.env`
 on the host. Backups: `scripts/backup.sh` / `scripts/restore.sh` dump the bundled Postgres.
 
-## Deploy for free (Render + Neon + Vercel)
+## Deploy on Render
 
-Three free services, no credit card required anywhere: [Neon](https://neon.tech) for
-Postgres, [Render](https://render.com) for the server + bot, [Vercel](https://vercel.com)
-for the Mini App. What this costs you in exchange for free: Render's free web services
-sleep after 15 minutes with no inbound traffic and take about a minute to wake back up on
-the next request — fine for a game people open occasionally, noticeable if a room sits
-idle mid-game. There's nothing to pay to remove that; it's Render's paid tier that keeps a
-service always on.
+Two Render services, described by `render.yaml`:
 
-**1. Database — Neon.** Create a project at [neon.tech](https://neon.tech) (no card
-needed). Copy the connection string it gives you (starts `postgresql://...`) — that's your
-`DATABASE_URL`. Unlike Render's own free Postgres, a Neon project never expires; it just
-suspends compute between queries and resumes in a few hundred milliseconds, so it's safe to
-leave as the permanent database.
+- **usabingo**: the game server **and** the Mini App in one image (`Dockerfile.render`). One
+  URL serves players, the API, the websocket and the admin dashboard, so there is no CORS,
+  no `VITE_API_URL` and no separate web host to keep in step.
+- **usabingo-bot**: the Telegram bot. On Render it switches from long polling to **webhook**
+  mode by itself (a sleeping service cannot poll, but a webhook request wakes it).
 
-**2. Server + bot — Render.** Push this repo to GitHub, then in the Render dashboard:
-**New → Blueprint**, pick the repo. Render reads `render.yaml` at the repo root and creates
-both `tg-bingo-server` and `tg-bingo-bot` as free web services. Fill in the prompted env
-vars (or add them afterward from each service's *Environment* tab):
+**1. Database.** Create a project at [neon.tech](https://neon.tech) (free, no card) and copy
+its connection string (`postgresql://…`): that is `DATABASE_URL`. Do not use Render's own
+*free* Postgres for this: it is deleted after 30 days, and the wallets live in it. A paid
+Render database is fine.
 
-- `DATABASE_URL` — the Neon connection string, same value on both services.
-- `BOT_TOKEN` — from @BotFather, same value on both services. **Rotate it first** if it was
-  ever shared or pasted anywhere outside this repo — see the security note this doc/TODO.md
-  already flags.
-- `WEBAPP_URL` (bot) and `ALLOWED_ORIGINS` (server) — the webapp's Vercel URL from step 3
-  below (so deploy the webapp first, or come back and fill these in after).
-- `API_URL` (bot only) — `tg-bingo-server`'s own Render URL, e.g.
-  `https://tg-bingo-server-xxxx.onrender.com`. Render free services can't reach each other
-  over its private network (only paid services can *receive* private traffic), so this has
-  to be the public URL — copy it from the server service's page after its first deploy.
-- `ADMIN_TOKEN` — optional, needed only if you want the admin dashboard.
+**2. Code on GitHub.** Render builds from a Git repository:
 
-Nothing else to set: `PORT` and `RENDER_EXTERNAL_URL` are injected by Render automatically,
-`PUBLIC_URL` (server) and webhook mode (bot) both fall back to `RENDER_EXTERNAL_URL` on
-their own (see `server/src/config.js` and `bot/src/index.js`). The bot switches from
-long-polling to Telegram **webhook** mode automatically whenever it's running on Render —
-long-polling can't work on a host that sleeps the process, since nothing would ever be able
-to wake a sleeping poller back up, but an incoming webhook request both delivers the update
-and wakes the service.
+```bash
+git push -u origin feature/telebirr-deposits-multi-cartela
+```
 
-**3. Mini App — Vercel.** Import the repo in Vercel, set **Root Directory** to `webapp`
-(framework preset "Vite" should be auto-detected). Add one build-time environment variable:
-`VITE_API_URL` = the server's Render URL from step 2 (same value as the bot's `API_URL`).
-This is what lets the webapp call a server on a different origin than itself — without it,
-the app assumes it's served from the same origin as the API (which is what docker-compose's
-nginx does), and that assumption doesn't hold once the two are on separate hosts. Deploy,
-then take the resulting `https://your-app.vercel.app` URL back to step 2's `WEBAPP_URL` /
-`ALLOWED_ORIGINS` if you hadn't filled those in yet.
+The repository may be private: Render asks for access to it when you connect GitHub.
 
-**4. Point the bot at itself in Telegram.** In @BotFather, `/setmenubutton` (or just send
-`/start` to your bot) with the Vercel URL from step 3. Send `/start` — the bot should
-register you and the **Play Bingo** button should open the game.
+**3. Blueprint.** [dashboard.render.com/blueprints](https://dashboard.render.com/blueprints) →
+**New Blueprint Instance** → pick the repository and the branch you pushed. Render reads
+`render.yaml` and asks for:
 
-Everything above has been smoke-tested piece by piece in isolation (CORS allow/deny
-behavior, the bot's webhook HTTP path end-to-end including Telegram's secret-token check,
-the webapp build with and without `VITE_API_URL`) — see `TODO.md` for what's still a
-judgment call for you rather than something to automate: which Postgres/hosting provider,
-the backup schedule, and rotating the bot token.
+| Value | Where | What to enter |
+|---|---|---|
+| `DATABASE_URL` | both services | the Neon connection string |
+| `BOT_TOKEN` | both services | from @BotFather |
+| `ADMIN_TOKEN` | usabingo | a long random secret: the password of the admin dashboard |
+| `HOUSE_TELEBIRR_ACCOUNT`, `HOUSE_TELEBIRR_NAME` | usabingo | the Telebirr numbers players pay into and the names on them, comma separated |
+| `PAYOUT_ACCOUNT`, `PAYOUT_NAME` | usabingo | the Telebirr account cash-outs are paid from |
+| `WEBAPP_URL`, `API_URL` | usabingo-bot | leave empty for now (step 4) |
+| `SUPPORT_USERNAME`, `CHANNEL_USERNAME` | usabingo-bot | optional, shown by `/contact` |
+
+**4. Give the bot the game's URL.** When **usabingo** has deployed, copy its URL from its page
+(`https://usabingo-xxxx.onrender.com`) into **both** `WEBAPP_URL` and `API_URL` of
+**usabingo-bot** (Environment tab) and save: the bot redeploys. Send `/start` to the bot;
+**Play Bingo** opens the game from Render. The admin dashboard is
+`https://usabingo-xxxx.onrender.com/api/admin/dashboard`.
+
+**5. Moving players over (optional).** Wallets and players live in the database. To carry the
+local ones to Neon: `docker exec tg-bingo-postgres pg_dump -U postgres --no-owner tgbingo >
+tgbingo.sql`, then `psql "<DATABASE_URL>" < tgbingo.sql` before the first deploy. Stop the
+local bot afterwards (`docker compose stop bot`): one bot token cannot serve two bots.
+
+**Plans.** On the `free` plan a service sleeps after 15 minutes without traffic and takes
+about a minute to wake. Tables live in memory, so a sleeping server has no running games
+(stakes of an unfinished round are refunded on shutdown) and demo players stop too. For real
+play put **usabingo** on `starter`; the bot can stay free.
+
+`Dockerfile.render` is tested locally the way Render runs it (its own `PORT`, no nginx in
+front): the page, hashed assets, Amharic clips, SPA routes, `/api`, the websocket and the
+dashboard are all served, and `webapp/scripts/e2e-two-players.mjs` plays a paid round
+against it. `docker-compose.yml` is unchanged and still uses nginx + the separate images.

@@ -1,0 +1,13 @@
+# For Dockerfile.render (build context = repository root). The per-service Dockerfiles have their own.
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+.git
+marketing
+deploy
+scripts
+*.md
+**/test
+**/*.log

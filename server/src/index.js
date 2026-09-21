@@ -14,6 +14,7 @@ import { createSettings } from './settings.js';
 import { createAnnouncements } from './announcements.js';
 import { attachRealtime } from './realtime.js';
 import { createDemoBots, isDemoId } from './demoBots.js';
+import { serveWebapp } from './webapp.js';
 import { createDepositVerifier } from './verifier.js';
 import { createTelebirrPayout } from './payouts/telebirr.js';
 
@@ -105,6 +106,9 @@ console.log(`[verifier] Telebirr receipts re-checked every ${Math.round(config.r
 const payout = createTelebirrPayout(config.telebirr);
 console.log(`[payouts] Telebirr disbursement gateway: ${payout.available ? 'configured' : 'not configured (cash-outs paid by hand, confirmed by receipt id)'}`);
 app.use('/api/admin', adminRouter({ config, store, manager, notifyBalance: (userId, balance) => io.to(`user:${userId}`).emit('wallet:balance', { balance }), kick, closeRoom, settings, announcements, verifier, payout }));
+
+// After every API route: the Mini App itself, when this image carries it (single-service deploy).
+serveWebapp(app);
 
 app.use((err, _req, res, _next) => {
   console.error('[server] unhandled error:', err);

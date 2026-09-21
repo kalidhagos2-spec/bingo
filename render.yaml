@@ -1,50 +1,43 @@
-# Render Blueprint for the server + bot (the webapp deploys separately to Vercel/Netlify --
-# see the "Deploy for free" section in README.md for the full walkthrough, including the
-# manual steps below that a blueprint can't fill in for you: which env vars need a real
-# value after each service's first deploy).
+# Render Blueprint: the whole of USA Bingo as two services.
 #
-# Deploy: https://dashboard.render.com/blueprints -> New Blueprint Instance -> pick this repo.
-# Render finds this file automatically. Both services are on the free plan (see README for
-# what that means: they sleep after 15 min idle, ~1 min cold start on the next request).
+#   usabingo      the game server AND the Mini App in one image (Dockerfile.render): one URL
+#                 for players, the API, the websocket and the admin dashboard. No CORS to set up.
+#   usabingo-bot  the Telegram bot, in webhook mode.
 #
-# Env vars marked `sync: false` below are prompted for during setup, or can be filled in
-# afterward from each service's Environment tab in the Render dashboard.
+# Deploy: https://dashboard.render.com/blueprints -> New Blueprint Instance -> pick this repo
+# and branch. Render reads this file, asks for the values marked `sync: false`, and builds.
+# README.md ("Deploy on Render") walks through it, including the database and the two URLs
+# the bot needs after the first deploy.
+#
+# Plans: `free` services sleep after 15 minutes without traffic and take about a minute to wake;
+# tables live in memory, so a sleeping server means no running games (stakes of an unfinished
+# round are refunded on shutdown). For real play put `usabingo` on `starter`.
 
 services:
   - type: web
-    name: tg-bingo-server
+    name: usabingo
     runtime: docker
     plan: free
     region: frankfurt # closest Render region to Ethiopia: every tap that needs the server pays this round trip
-    dockerfilePath: server/Dockerfile
-    dockerContext: server
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: .
     healthCheckPath: /api/health
     envVars:
-      # Neon (or any Postgres) connection string. See README's "Deploy for free" section.
+      # PostgreSQL connection string. A free Render database is deleted after 30 days, which a
+      # wallet cannot afford: use Neon (free, permanent) or a paid Render database.
       - key: DATABASE_URL
         sync: false
-      # From @BotFather. Same token as the bot service below -- rotate it first if it was
-      # ever shared or committed (see the security note in TODO.md).
+      # From @BotFather. The same token as the bot service below.
       - key: BOT_TOKEN
         sync: false
-      # The webapp's Vercel URL (e.g. https://your-app.vercel.app), once you have it -- set
-      # after the Vercel deploy. Comma-separated if you add a second origin later (a preview
-      # deployment URL, a custom domain).
-      - key: ALLOWED_ORIGINS
-        sync: false
-      # Operator access to /api/admin (house ledger, kicking players, etc.). Leave blank to
-      # skip for now; set to a real secret before you rely on the admin dashboard.
+      # The secret for /api/admin/dashboard. Use a long random string.
       - key: ADMIN_TOKEN
         sync: false
-      # Deposits: set HOUSE_TELEBIRR_ACCOUNT / HOUSE_TELEBIRR_NAME (and CBEBIRR / BOA) to your
-      # receiving accounts; add TELEBIRR_* / CHAPA_* vars for online checkout (see server/.env.example).
+      # The Telebirr numbers players deposit to, and the names on them (comma separated, paired
+      # by position). They can be changed later in the dashboard: Settings > House accounts.
       - key: HOUSE_TELEBIRR_ACCOUNT
         sync: false
       - key: HOUSE_TELEBIRR_NAME
-        sync: false
-      - key: HOUSE_CBEBIRR_ACCOUNT
-        sync: false
-      - key: HOUSE_CBEBIRR_NAME
         sync: false
       # Cash-outs are paid from this Telebirr account (shown to players and in the dashboard).
       - key: PAYOUT_METHOD
@@ -53,7 +46,7 @@ services:
         sync: false
       - key: PAYOUT_NAME
         sync: false
-      # Fees and game rules (code defaults shown; change here or later in the dashboard Settings).
+      # Fees and game rules: the defaults the dashboard's Settings start from.
       - key: DEPOSIT_FEE_PERCENT
         value: "0"
       - key: WITHDRAW_FEE_PERCENT
@@ -68,16 +61,24 @@ services:
         value: "400"
       - key: MAX_CARTELAS
         value: "4"
+      - key: MAX_PLAYERS
+        value: "55"
+      # Demo players are off on a fresh deploy; switch them on in Settings > Demo players.
+      - key: DEMO_BOTS
+        value: "0"
+      - key: DEMO_BOTS_PER_ROOM
+        value: "50"
+      - key: DEMO_BOTS_SHARE
+        value: "0"
       - key: AUTO_APPROVE_DEPOSITS
         value: "false"
       - key: DEV_ALLOW_ANON
         value: "false"
-      # PUBLIC_URL / PORT are not listed here: Render injects RENDER_EXTERNAL_URL and PORT
-      # automatically, and server/src/config.js falls back to RENDER_EXTERNAL_URL for
-      # PUBLIC_URL when it's not set explicitly.
+      # PUBLIC_URL / PORT are not listed: Render injects RENDER_EXTERNAL_URL and PORT, and
+      # server/src/config.js falls back to RENDER_EXTERNAL_URL for PUBLIC_URL.
 
   - type: web
-    name: tg-bingo-bot
+    name: usabingo-bot
     runtime: docker
     plan: free
     region: frankfurt
@@ -85,21 +86,21 @@ services:
     dockerContext: bot
     healthCheckPath: /
     envVars:
-      # Same value as tg-bingo-server's DATABASE_URL above.
+      # Same values as the usabingo service above.
       - key: DATABASE_URL
         sync: false
-      # Same value as tg-bingo-server's BOT_TOKEN above.
       - key: BOT_TOKEN
         sync: false
-      # The webapp's Vercel URL -- same value as tg-bingo-server's ALLOWED_ORIGINS above.
+      # Both are the URL of the usabingo service (https://usabingo-xxxx.onrender.com), copied
+      # from its page after its first deploy: the Mini App and the API now share that one URL.
       - key: WEBAPP_URL
         sync: false
-      # tg-bingo-server's own Render URL (e.g. https://tg-bingo-server-xxxx.onrender.com).
-      # Free services can't reach each other over Render's private network (only paid
-      # services can *receive* private traffic), so this has to be the public URL -- copy it
-      # from the server service's page once it has deployed once.
       - key: API_URL
         sync: false
-      # WEBHOOK_URL is not listed here: Render injects RENDER_EXTERNAL_URL automatically,
-      # and src/index.js falls back to it, so the bot switches to webhook mode with no extra
-      # setup. (WEBHOOK_URL only needs to be set by hand on a host that doesn't provide that.)
+      # Shown by /contact once they exist (Telegram usernames, without the @).
+      - key: SUPPORT_USERNAME
+        sync: false
+      - key: CHANNEL_USERNAME
+        sync: false
+      # WEBHOOK_URL is not listed: Render injects RENDER_EXTERNAL_URL and src/index.js falls back
+      # to it, so the bot runs in webhook mode with no extra setup.
