@@ -489,6 +489,11 @@ The repository may be private: Render asks for access to it when you connect Git
 **Play Bingo** opens the game from Render. The admin dashboard is
 `https://usabingo-xxxx.onrender.com/api/admin/dashboard`.
 
+**Android install.** After deploying the latest web app, open its HTTPS URL in Chrome on an
+Android phone and choose **Install app** (or **Add to Home screen**) from the browser menu.
+The installed PWA is a home-screen shortcut to the game; sign in and play from the Telegram
+bot's **Play Bingo** button, since the game uses Telegram Mini App authentication.
+
 **5. Moving players over (optional).** Wallets and players live in the database. To carry the
 local ones to Neon: `docker exec tg-bingo-postgres pg_dump -U postgres --no-owner tgbingo >
 tgbingo.sql`, then `psql "<DATABASE_URL>" < tgbingo.sql` before the first deploy. Stop the
