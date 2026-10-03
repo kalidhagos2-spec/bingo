@@ -3,6 +3,8 @@ import { dashboardPage } from './adminDashboard.js';
 import { houseAccounts } from './payments.js';
 import { verifyPayoutReceipt } from '../verifier.js';
 import { STATUS } from '../store.js';
+import { canPay } from '../payouts/registry.js';
+import { kindOf } from '../payouts/errors.js';
 
 /**
  * /api/admin — operator view of the house: fees kept from stakes and totals.
@@ -17,12 +19,12 @@ function decorate(config, store, rows) {
 /** Largest single manual wallet adjustment, a guard against a slipped zero. */
 const MAX_ADJUST = 50_000;
 
-export function adminRouter({ config, store, manager = null, notifyBalance = () => {}, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null }) {
+export function adminRouter({ config, store, manager = null, notifyBalance = () => {}, notifyWithdrawal = () => {}, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null, payoutWatcher = null, receiptFetch = globalThis.fetch }) {
   const router = Router();
 
   // The page itself is public; every data call from it carries the admin token.
   router.get('/dashboard', (_req, res) => {
-    res.type('html').send(dashboardPage({ currency: config.currency, payout: config.payout, gateway: Boolean(payout?.available) }));
+    res.type('html').send(dashboardPage({ currency: config.currency, payout: config.payout, gateway: payout?.available ? payout.id : null, gatewayLabel: payout?.label ?? null, gatewayMethods: payout?.methods ?? [] }));
   });
 
   router.use((req, res, next) => {
@@ -199,35 +201,74 @@ export function adminRouter({ config, store, manager = null, notifyBalance = () 
     res.json({ withdrawals: decorate(config, store, await store.withdrawalsByStatus(status, 100)) });
   });
 
-  /**
-   * Pays a cash-out. Three ways, in order of preference:
-   *  - no transaction id + Telebirr gateway configured: the money is sent through the
-   *    gateway now and its transaction number is recorded (`verified: gateway`);
-   *  - a transaction id of a payout sent by hand: its public receipt must show the id, the
-   *    net amount and the player's number (`verified: receipt`), else 409 with the reason;
-   *  - `force: true` with an id: recorded as paid without the check (`verified: operator`).
-   */
+  // ---------- cash-outs ----------
+  //
+  // Approve sends the money. With a payout gateway that covers the rail, the row is moved to
+  // `processing` under a lock first and the gateway is asked to send exactly once; the answer
+  // (or, later, the watcher's status check) settles it. Without a gateway, or with a
+  // transaction id typed in, the operator paid by hand: the Telebirr receipt is checked unless
+  // `force` says the operator takes responsibility.
+  const limit = () => Number(config.maxAutoPayout ?? Infinity);
+  const already = (res, tx) => res.status(409).json({ error: `Withdrawal already ${tx.status}` });
+
   router.post('/withdrawals/:ref/approve', json(), async (req, res) => {
     try {
       const tx = await store.findByRef(req.params.ref);
       if (!tx || tx.type !== 'withdraw') return res.status(404).json({ error: 'Withdrawal not found' });
-      if (tx.status !== STATUS.PENDING) return res.status(400).json({ error: `Withdrawal already ${tx.status}` });
-      let providerRef = String(req.body?.providerRef ?? '').trim() || null;
-      let verified = 'operator';
-      if (!providerRef && payout?.available && tx.method === payout.id) {
-        const sent = await payout.send({ phone: tx.account, amount: tx.payout, ref: tx.ref });
-        providerRef = sent.providerRef;
-        verified = 'gateway';
-      } else if (!providerRef) {
-        return res.status(400).json({ error: 'Enter the transaction id of the payout you sent (or configure the Telebirr gateway to send it automatically)' });
-      } else if (tx.method === 'telebirr' && !req.body?.force) {
-        const check = await verifyPayoutReceipt({ txId: providerRef, amount: tx.payout, account: tx.account });
-        if (!check.ok) return res.status(409).json({ error: `Receipt check failed: ${check.reason}`, check });
-        verified = 'receipt';
+      const providerRef = String(req.body?.providerRef ?? '').trim() || null;
+      const force = Boolean(req.body?.force);
+
+      if (providerRef) {
+        // Paid by hand. A processing row may be settled this way only with force: the operator
+        // has checked with the provider that the money went out.
+        if (tx.status !== STATUS.PENDING && !(tx.status === STATUS.PROCESSING && force)) return already(res, tx);
+        let verified = 'operator';
+        if (tx.method === 'telebirr' && !force) {
+          const check = await verifyPayoutReceipt({ txId: providerRef, amount: tx.payout, account: tx.account }, receiptFetch);
+          if (!check.ok) return res.status(409).json({ error: `Receipt check failed: ${check.reason}`, check });
+          verified = 'receipt';
+        }
+        const paid = await store.completePayout(tx.ref, { providerRef, verified });
+        notifyWithdrawal(paid);
+        return res.json(paid);
       }
-      const paid = await store.resolveWithdrawal(tx.ref, { approved: true, providerRef });
-      await store.update(tx.ref, { verified });
-      res.json({ ...paid, verified });
+
+      if (!canPay(payout, tx.method)) return res.status(400).json({ error: `Enter the transaction id of the payout you sent (no payout gateway is configured for ${tx.method})` });
+      if (tx.status !== STATUS.PENDING) return already(res, tx);
+      if (tx.payout > limit() && !force) {
+        return res.status(409).json({ error: `Payout of ${tx.payout} ${config.currency} is above the one-click limit of ${limit()} ${config.currency}: confirm to send it`, confirmRequired: true });
+      }
+      try {
+        await store.beginPayout(tx.ref, { provider: payout.id }); // the double-click guard: one of two Approves fails here
+      } catch (err) {
+        return res.status(409).json({ error: err.message });
+      }
+      const name = store.profile(tx.userId)?.name ?? null;
+      try {
+        const sent = await payout.send({ ref: tx.ref, amount: tx.payout, method: tx.method, account: tx.account, name });
+        if (sent.status === 'paid') {
+          const paid = await store.completePayout(tx.ref, { providerRef: sent.providerRef ?? null, verified: 'gateway' });
+          notifyWithdrawal(paid);
+          return res.json(paid);
+        }
+        const queued = await store.recordPayoutCheck(tx.ref, { providerRef: sent.providerRef ?? null, note: `queued at ${payout.id}` });
+        return res.status(202).json(queued);
+      } catch (err) {
+        const kind = kindOf(err);
+        console.warn(`[payouts] ${payout.id} send ${tx.ref} (${kind}): ${err.message}`);
+        if (kind === 'rejected') {
+          const failed = await store.failPayout(tx.ref, { reason: err.message, providerRef: err.providerRef ?? null });
+          notifyWithdrawal(failed);
+          return res.json(failed);
+        }
+        if (kind === 'retry') {
+          await store.revertPayout(tx.ref, { note: err.message });
+          return res.status(409).json({ error: err.message, retryable: true });
+        }
+        // Ambiguous: the money may or may not have left. Never send again; the watcher asks the gateway.
+        const unsure = await store.recordPayoutCheck(tx.ref, { note: `send did not answer: ${err.message}` });
+        return res.status(202).json({ ...unsure, warning: 'The gateway did not answer; the status is checked automatically. Nothing is re-sent.' });
+      }
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -235,7 +276,36 @@ export function adminRouter({ config, store, manager = null, notifyBalance = () 
 
   router.post('/withdrawals/:ref/reject', json(), async (req, res) => {
     try {
-      res.json(await store.resolveWithdrawal(req.params.ref, { approved: false, reason: req.body?.reason ?? 'Rejected by operator' }));
+      const tx = await store.resolveWithdrawal(req.params.ref, { approved: false, reason: req.body?.reason ?? 'Rejected by operator' });
+      notifyWithdrawal(tx);
+      res.json(tx);
+    } catch (err) {
+      res.status(/^Withdrawal already/.test(err.message) ? 409 : 400).json({ error: err.message });
+    }
+  });
+
+  /** Asks the gateway about a processing cash-out now, instead of waiting for the watcher. */
+  router.post('/withdrawals/:ref/check', async (req, res) => {
+    if (!payoutWatcher || !payout) return res.status(503).json({ error: 'No payout gateway is configured' });
+    try {
+      const { tx, check } = await payoutWatcher.checkOne(req.params.ref);
+      res.json({ ...tx, check });
+    } catch (err) {
+      res.status(/not found/i.test(err.message) ? 404 : 400).json({ error: err.message });
+    }
+  });
+
+  /** The operator, having checked with the provider that nothing was paid, fails a processing cash-out (hold refunded). */
+  router.post('/withdrawals/:ref/fail', json(), async (req, res) => {
+    try {
+      const tx = await store.findByRef(req.params.ref);
+      if (!tx || tx.type !== 'withdraw') return res.status(404).json({ error: 'Withdrawal not found' });
+      if (tx.status !== STATUS.PROCESSING) return already(res, tx);
+      const reason = String(req.body?.reason ?? '').trim();
+      if (reason.length < 3) return res.status(400).json({ error: 'A reason is required: it is shown to the player' });
+      const failed = await store.failPayout(tx.ref, { reason: `Operator: ${reason}` });
+      notifyWithdrawal(failed);
+      res.json(failed);
     } catch (err) {
       res.status(400).json({ error: err.message });
     }

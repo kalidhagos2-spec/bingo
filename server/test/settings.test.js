@@ -39,7 +39,9 @@ test('validation rejects out-of-range, non-integer and inconsistent values', () 
   assert.throws(() => validate({ stakes: '0,-5' }, current), /Stakes must be/);
   assert.deepEqual(validate({ stakes: ' 50, 0,10,10 ', houseCutPercent: '2.5' }, current), { stakes: [0, 10, 50], houseCutPercent: 2.5 });
   assert.deepEqual(validate({ unknown: 1 }, current), {}); // unknown keys are ignored
-  assert.equal(SCHEMA.length, 24); // + maxPrize and the three demo-player settings
+  assert.equal(SCHEMA.length, 25); // + maxPrize, the three demo-player settings and maxAutoPayout
+  assert.deepEqual(validate({ maxAutoPayout: 500 }, current), { maxAutoPayout: 500 });
+  assert.throws(() => validate({ maxAutoPayout: -1 }, current), /between 0 and/);
   assert.deepEqual(validate({ boaAccount: ' 1000000000 ' }, current), { boaAccount: '1000000000' });
   assert.throws(() => validate({ boaName: 'x'.repeat(61) }, current), /at most 60/);
   // House accounts: one number per slot, names must be names, numbers must be numbers.

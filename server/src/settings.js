@@ -9,6 +9,7 @@ export const SCHEMA = Object.freeze([
   { key: 'maxPrize', group: 'Prize', label: 'Largest prize of one round (ETB). The prize never goes above this, however many cartelas are in play', min: 10, max: 1_000_000, step: 1, scope: 'game' },
   { key: 'depositFeePercent', group: 'Fees', label: 'Deposit (top-up) fee (%)', min: 0, max: 20, step: 0.5, scope: 'root' },
   { key: 'withdrawFeePercent', group: 'Fees', label: 'Cash-out fee (%)', min: 0, max: 20, step: 0.5, scope: 'root' },
+  { key: 'maxAutoPayout', group: 'Cash-outs', label: 'Largest cash-out the payout gateway sends on one click (ETB). Above it, Approve asks you to confirm first', min: 0, max: 1_000_000, step: 1, scope: 'root' },
   { key: 'minTopup', group: 'Limits', label: 'Minimum top-up (ETB)', min: 1, max: 1_000_000, step: 1, scope: 'root' },
   { key: 'maxTopup', group: 'Limits', label: 'Maximum top-up (ETB)', min: 1, max: 1_000_000, step: 1, scope: 'root' },
   { key: 'minWithdraw', group: 'Limits', label: 'Minimum cash-out (ETB)', min: 1, max: 1_000_000, step: 1, scope: 'root' },

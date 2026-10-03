@@ -34,7 +34,7 @@ export const houseAccounts = (config) =>
 const isMethod = (id) => METHODS.some((m) => m.id === id);
 
 /** `notifyBalance(userId, balance)` pushes a live wallet update to a connected player (optional). */
-export function paymentsRouter({ config, store, providers, auth, notifyBalance = () => {} }) {
+export function paymentsRouter({ config, store, providers, auth, notifyBalance = () => {}, payout = null, payoutWatcher = null }) {
   const router = Router();
   const jsonWithRaw = json({ verify: (req, _res, buf) => (req.rawBody = buf.toString('utf8')) });
 
@@ -63,6 +63,25 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
       res.send(provider.webhookResponse ?? { received: true });
     } catch (err) {
       console.error(`[payments] webhook ${provider.id} failed:`, err);
+      res.status(400).json({ error: 'Webhook processing failed' });
+    }
+  });
+
+  /**
+   * A payout gateway's notification about a cash-out it was asked to send. The body is only a
+   * trigger: after the gateway's own signature check, the cash-out's status is re-queried from
+   * the gateway and settled from that answer, never from the notification itself.
+   */
+  router.post('/payout-webhook/:provider', text({ type: 'text/*' }), jsonWithRaw, urlencoded({ extended: false }), async (req, res) => {
+    if (!payout || payout.id !== req.params.provider) return res.status(404).json({ error: 'Unknown payout provider' });
+    try {
+      const hint = await payout.handleWebhook(req);
+      if (!hint?.ref) return res.status(400).json({ error: 'Unrecognised notification' });
+      const tx = await store.findByRef(hint.ref);
+      if (tx?.type === 'withdraw' && tx.status === STATUS.PROCESSING && tx.payoutProvider === payout.id && payoutWatcher) await payoutWatcher.checkOne(tx.ref);
+      res.send(payout.webhookResponse ?? { received: true });
+    } catch (err) {
+      console.error(`[payouts] webhook ${payout.id} failed:`, err);
       res.status(400).json({ error: 'Webhook processing failed' });
     }
   });

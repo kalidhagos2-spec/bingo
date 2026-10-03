@@ -45,7 +45,27 @@ export const config = {
     method: env('PAYOUT_METHOD', 'telebirr'),
     account: env('PAYOUT_ACCOUNT'),
     name: env('PAYOUT_NAME'),
+    /**
+     * Who sends an approved cash-out (see payouts/registry.js): none = the operator pays by
+     * hand and enters the receipt id; sandbox = simulated, for rehearsals; chapa = Chapa
+     * transfers (needs CHAPA_SECRET_KEY); telebirr = the unverified Telebirr B2C stub.
+     */
+    provider: env('PAYOUT_PROVIDER', 'none').toLowerCase(),
+    /** How often processing cash-outs are asked about, and how long a fresh send is left alone. */
+    checkMs: num('PAYOUT_CHECK_MS', 60_000),
+    checkMinAgeMs: num('PAYOUT_CHECK_MIN_AGE_MS', 20_000),
+    /** After this a processing cash-out is flagged for a person and no longer queried. */
+    giveUpHours: num('PAYOUT_GIVE_UP_HOURS', 48),
+    /** "No record of it" for this long, with nothing to show for the send, means it never left: refund. */
+    unknownGraceMs: num('PAYOUT_UNKNOWN_GRACE_MS', 15 * 60_000),
+    sandbox: {
+      outcome: env('PAYOUT_SANDBOX_OUTCOME', 'success'),
+      delayMs: num('PAYOUT_SANDBOX_DELAY_MS', 15_000),
+      webhookSecret: env('PAYOUT_SANDBOX_WEBHOOK_SECRET'),
+    },
   },
+  /** Largest cash-out the gateway sends on one click; above it the operator must confirm. Editable in the dashboard. */
+  maxAutoPayout: num('MAX_AUTO_PAYOUT', 2000),
   /** Cash-outs: limits in ETB and the share kept by the house (0 = free). */
   minWithdraw: num('MIN_WITHDRAW', 50),
   maxWithdraw: num('MAX_WITHDRAW', 5000),
@@ -130,6 +150,8 @@ export const config = {
     secretKey: env('CHAPA_SECRET_KEY'),
     webhookSecret: env('CHAPA_WEBHOOK_SECRET'),
     baseUrl: env('CHAPA_BASE_URL', 'https://api.chapa.co').replace(/\/+$/, ''),
+    /** Chapa bank ids for payouts (GET /v1/banks); empty = found by name at run time. */
+    bankCodes: { telebirr: env('CHAPA_BANK_CODE_TELEBIRR'), cbebirr: env('CHAPA_BANK_CODE_CBEBIRR'), boa: env('CHAPA_BANK_CODE_BOA') },
   },
 };
 

@@ -306,13 +306,8 @@ without anyone touching it; the dashboard also has a **Verify** button per depos
 (`POST /api/admin/deposits/:ref/verify`). The Deposits tab shows the player's name and
 which house account (with its name) the money went to.
 
-Cash-outs: approving one in the dashboard asks for the Telebirr transaction id of the
-payout you sent; the server checks that receipt (id, net amount, the player's number)
-before marking it paid, and refuses with the reason otherwise (an operator can override).
-With `TELEBIRR_B2C_URL` and the merchant credentials configured, leaving the id empty
-sends the payout through the Telebirr disbursement gateway instead and records its
-transaction number (`server/src/payouts/telebirr.js`; confirm the endpoint and field
-names against your merchant contract). When
+Cash-outs are approved in the dashboard; see **Cash-out (withdrawals)** below for how
+the money is sent. When
 no house account is configured the tab says deposits open soon. Paid tables in the lobby
 show **DEPOSIT** instead of **JOIN** while the balance is below the stake, and that
 button opens this tab with the missing amount pre-filled. Online checkout (**Pay online**)
@@ -332,20 +327,52 @@ appears alongside only when a gateway is configured.
   default 50–5000 ETB) and the Telebirr phone number to pay out to (`PAYOUT_METHOD`
   limits the rail; Telebirr by default). The amount is **held** from the wallet at once so it cannot
   be staked twice; `WITHDRAW_FEE_PERCENT` (default 2 %) is kept by the house on payout.
-- Requests wait in an operator queue: `GET /api/admin/withdrawals?status=pending`, then
-  `POST /api/admin/withdrawals/:ref/approve {providerRef}` after paying the player through
-  the gateway's merchant tools, or `POST /api/admin/withdrawals/:ref/reject {reason}` to
-  refund the hold. Players can cancel a pending request themselves
-  (`POST /api/payments/withdraw/:ref/cancel`), which also refunds it.
-- API: `POST /api/payments/withdraw {method, amount, account}` → the pending transaction.
+- Requests wait in the operator queue (`GET /api/admin/withdrawals?status=pending`) until
+  the operator presses **Approve** in the dashboard. Players can cancel a pending request
+  themselves (`POST /api/payments/withdraw/:ref/cancel`), which refunds the hold.
+- **Who sends the money** is `PAYOUT_PROVIDER` (`server/src/payouts/`):
+  - `none` (default): the operator pays by hand from `PAYOUT_ACCOUNT` and enters the Telebirr
+    transaction id; the server checks the public receipt (id, net amount, the player's number)
+    before marking it paid, or the operator overrides with *force*.
+  - `chapa`: **Chapa Transfers** send it to the player's Telebirr wallet or bank account
+    (`CHAPA_SECRET_KEY`; bank ids from `GET /v1/banks`, or `CHAPA_BANK_CODE_*`). Transfers are
+    asynchronous: Chapa queues them, and the result comes from its verify endpoint and from the
+    payout webhook, which must point at `<PUBLIC_URL>/api/payments/payout-webhook/chapa`
+    (`CHAPA_WEBHOOK_SECRET`). Chapa may refuse outside its transfer hours (Mon–Sat 08:30–16:30);
+    such a cash-out goes back to pending with the message, and Approve later is the retry.
+  - `sandbox`: a simulated gateway for rehearsals (no money moves; the dashboard says so). The
+    last two digits of the account choose the outcome, see `server/.env.example`.
+  - `telebirr`: the unverified Telebirr B2C stub (`TELEBIRR_B2C_URL` + merchant credentials).
+- **What Approve does with a gateway.** The row is moved `pending → processing` under a row
+  lock first, then the gateway is asked to send *once*: a second click, or two operators, get
+  "Withdrawal already processing" instead of a second payment. A refusal that created nothing
+  fails the cash-out (hold refunded) or, if it was only "try later", puts it back to pending; a
+  timeout leaves it `processing` and nothing is ever re-sent. The **payout watcher** then asks
+  the gateway every `PAYOUT_CHECK_MS` (default 60 s) until it answers paid (fee booked to the
+  house) or failed (hold refunded); after `PAYOUT_GIVE_UP_HOURS` (48) a still-unanswered one is
+  flagged *stale* for a person. A webhook only triggers that same status check, never settles
+  by itself. Cash-outs above `MAX_AUTO_PAYOUT` (dashboard: Settings → Cash-outs) ask the
+  operator to confirm before the gateway is used.
+- The player is told at once: the open Mini App refreshes its wallet (`wallet:update`), and the
+  bot sends a Telegram message in Amharic and English when a cash-out is paid, failed or rejected.
+- Statuses: `pending` → `processing` (sending) → `paid` | `failed` (refunded); `rejected`
+  (operator) and `cancelled` (player) also refund.
+- API: `POST /api/payments/withdraw {method, amount, account}` → the pending transaction;
+  admin `POST /api/admin/withdrawals/:ref/approve {providerRef?, force?}` (no `providerRef` =
+  send through the gateway; 202 while processing, 409 `confirmRequired` above the limit, 409
+  `retryable` when the gateway says try later), `…/reject {reason}`, `…/check` (ask the gateway
+  now), `…/fail {reason}` (the operator, having checked with the gateway, declares it not paid:
+  refund); public `POST /api/payments/payout-webhook/:provider`.
 
 ### Admin dashboard
 
 Open `<server>/api/admin/dashboard` (through nginx: `https://<your-host>/api/admin/dashboard`)
 and enter `ADMIN_TOKEN`. The page shows summary tiles (house balance, pending cash-outs,
 player balances, players, rounds, round / deposit fees, live tables), the **withdrawal
-queue** with Approve (asks for the gateway transaction reference) and Reject (asks for
-the reason shown to the player, refunds the hold) buttons, filterable by status, and the
+queue** with **Send via <gateway>** (when one is configured; shown in the tab header),
+**Paid by hand** / **Approve** (asks for the transaction id of a payout you made yourself),
+**Reject** (asks for the reason shown to the player, refunds the hold), and on a cash-out that
+is being sent **Check status** and **Mark failed**, filterable by status, and the
 **house ledger** (round fees, deposit fees, withdrawal fees), and a **players** tab
 (search by id, name, phone or email; wallet, coins, games, wins, winnings, sign-up state,
 last activity; click a row for the player's wallet ledger; **Suspend** with a reason and
@@ -381,8 +408,6 @@ refunds, goodwill credits and clawbacks: a reason is required and shown in the p
 history, a debit can never take the balance below zero, one adjustment is limited to 50,000, and
 every one is written to the player's ledger (type `adjustment`) and to the house ledger as an audit
 row (the house fee balance itself is not changed).
-  Automatic payouts (Telebirr B2C / Chapa transfers) can be wired into the approve step
-  once merchant credentials for disbursements are available.
 
 > Real-money games are regulated in Ethiopia (National Lottery Administration) and each
 > gateway issues merchant credentials only under contract.

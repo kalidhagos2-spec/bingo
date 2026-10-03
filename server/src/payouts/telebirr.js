@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { signPayload, encryptPayload, toPem } from '../payments/telebirr.js';
+import { PayoutError } from './errors.js';
 
 /**
  * Telebirr disbursement (B2C): pays a cash-out straight to the player's Telebirr number.
@@ -43,6 +44,36 @@ export function createTelebirrPayout(cfg, { fetchImpl = globalThis.fetch } = {})
       const providerRef = json?.data?.transactionNo ?? json?.data?.tradeNo ?? null;
       if (!res.ok || !providerRef) throw new Error(`Telebirr disbursement failed: ${json?.msg ?? res.status}`);
       return { providerRef, raw: json };
+    },
+  };
+}
+
+/**
+ * The B2C stub in the gateway shape used by payouts/registry.js. It has no status query and
+ * no callback, so a sent cash-out can only be settled by an operator who checked with Ethio
+ * Telecom ("Paid by hand" with the transaction number, or "Mark failed").
+ */
+export function telebirrPayoutAdapter(cfg, deps = {}) {
+  const stub = createTelebirrPayout(cfg, deps);
+  return {
+    id: 'telebirr',
+    label: 'Telebirr B2C (unverified merchant API)',
+    available: stub.available,
+    methods: ['telebirr'],
+    webhookResponse: 'success',
+    async send({ ref, amount, account }) {
+      try {
+        const sent = await stub.send({ phone: account, amount, ref });
+        return { providerRef: sent.providerRef, status: 'paid' };
+      } catch (err) {
+        throw new PayoutError(err.message, { kind: 'ambiguous' }); // no way to know what Ethio Telecom did with it
+      }
+    },
+    async status() {
+      return { status: 'processing', reason: 'Telebirr B2C has no status query: confirm with Ethio Telecom, then "Paid by hand" (with the transaction number) or "Mark failed"' };
+    },
+    async handleWebhook() {
+      return null;
     },
   };
 }

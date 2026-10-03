@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS transactions (
 -- Optional details a player adds to a transfer+receipt deposit so the operator can match it.
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payer_phone TEXT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payer_name TEXT;
+-- Gateway cash-outs (src/payouts/): which gateway sent it, how many times Approve was pressed,
+-- when the send started and when its status was last queried. NULL for payouts made by hand.
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payout_provider TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payout_attempts INT NOT NULL DEFAULT 0;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payout_started_at TIMESTAMPTZ;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payout_last_check_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS transactions_user_idx ON transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS transactions_type_status_idx ON transactions (type, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS transactions_receipt_idx ON transactions (method, provider_ref) WHERE type = 'deposit';

@@ -1,3 +1,4 @@
+import { sendTelegram } from './telegram.js';
 import { randomBytes } from 'node:crypto';
 
 export const LEVELS = Object.freeze(['info', 'warning', 'promo']);
@@ -66,18 +67,8 @@ export function createAnnouncements({ store, io = null, botToken = '', fetchImpl
     announcement.telegram.recipients = ids.length;
     const prefix = announcement.level === 'warning' ? '⚠️ ' : announcement.level === 'promo' ? '🎁 ' : '📢 ';
     for (const id of ids) {
-      try {
-        const res = await fetchImpl(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ chat_id: id, text: prefix + announcement.text }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (res.ok) announcement.telegram.sent += 1;
-        else announcement.telegram.failed += 1;
-      } catch {
-        announcement.telegram.failed += 1;
-      }
+      if (await sendTelegram({ botToken, chatId: id, text: prefix + announcement.text, fetchImpl })) announcement.telegram.sent += 1;
+      else announcement.telegram.failed += 1;
       await new Promise((r) => setTimeout(r, 40));
     }
     announcement.telegram.done = true;

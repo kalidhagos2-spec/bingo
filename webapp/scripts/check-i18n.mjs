@@ -90,6 +90,7 @@ const ERROR_SAMPLES = [
   'Enter the transaction / receipt id exactly as shown on the receipt (6–32 letters and digits)',
   'This transaction id has already been submitted',
   'Withdrawal already paid',
+  'Withdrawal already processing',
   'Name must be 2–32 characters',
   'Phone must be 7–15 digits, e.g. +251900000000',
   'Not enough coins: you need 500, you have 120',

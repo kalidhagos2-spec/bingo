@@ -46,6 +46,17 @@ services:
         sync: false
       - key: PAYOUT_NAME
         sync: false
+      # Who sends an approved cash-out: none = paid by hand (receipt id), sandbox = simulated,
+      # chapa = Chapa Transfers (then set CHAPA_SECRET_KEY / CHAPA_WEBHOOK_SECRET and point Chapa's
+      # payout webhook at https://<this service>/api/payments/payout-webhook/chapa).
+      - key: PAYOUT_PROVIDER
+        value: none
+      - key: MAX_AUTO_PAYOUT
+        value: "2000"
+      - key: CHAPA_SECRET_KEY
+        sync: false
+      - key: CHAPA_WEBHOOK_SECRET
+        sync: false
       # Fees and game rules: the defaults the dashboard's Settings start from.
       - key: DEPOSIT_FEE_PERCENT
         value: "0"

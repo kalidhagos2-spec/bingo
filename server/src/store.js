@@ -4,6 +4,7 @@ import { withTransaction } from './db/pool.js';
 
 export const STATUS = Object.freeze({
   PENDING: 'pending',
+  PROCESSING: 'processing', // a gateway cash-out that was sent and not yet confirmed (see payouts/)
   PAID: 'paid',
   FAILED: 'failed',
   CANCELLED: 'cancelled',
@@ -441,8 +442,9 @@ export class PaymentStore {
   async adminSummary() {
     // Demo players (negative ids) hold play money: not a liability, not a customer.
     const wallets = Object.entries(this.data.wallets).filter(([id]) => Number(id) > 0).map(([, w]) => w);
-    const [pendingW, pendingD, txCount, house] = await Promise.all([
+    const [pendingW, processingW, pendingD, txCount, house] = await Promise.all([
       this.pendingWithdrawals(),
+      this.withdrawalsByStatus(STATUS.PROCESSING, 1000),
       this.pendingDeposits(),
       this.pool.query('SELECT count(*)::int AS n FROM transactions'),
       this.house(0),
@@ -451,6 +453,7 @@ export class PaymentStore {
       players: Object.keys(this.data.profiles).filter((id) => Number(id) > 0).length,
       walletLiabilities: money(wallets.reduce((s, w) => s + w.balance, 0)),
       pendingWithdrawals: { count: pendingW.length, amount: money(pendingW.reduce((s, t) => s - t.amount, 0)) },
+      processingWithdrawals: { count: processingW.length, amount: money(processingW.reduce((s, t) => s - t.amount, 0)) },
       pendingDeposits: { count: pendingD.length, amount: money(pendingD.reduce((s, t) => s + t.amount, 0)) },
       houseBalance: house.balance,
       transactions: txCount.rows[0].n,
@@ -507,12 +510,14 @@ export class PaymentStore {
     await client.query(
       `UPDATE transactions SET
          type=$2, method=$3, account=$4, amount=$5, currency=$6, status=$7, note=$8, checkout_url=$9,
-         provider_ref=$10, fee=$11, credited=$12, payout=$13, verified=$14, reason=$15, auto_check=$16, updated_at=$17
+         provider_ref=$10, fee=$11, credited=$12, payout=$13, verified=$14, reason=$15, auto_check=$16, updated_at=$17,
+         payout_provider=$18, payout_attempts=$19, payout_started_at=$20, payout_last_check_at=$21
        WHERE ref = $1`,
       [
         tx.ref, tx.type ?? 'topup', tx.method ?? null, tx.account ?? null, tx.amount, tx.currency, tx.status,
         tx.note ?? null, tx.checkoutUrl ?? null, tx.providerRef ?? null, tx.fee ?? null, tx.credited ?? null,
         tx.payout ?? null, tx.verified ?? null, tx.reason ?? null, tx.autoCheck ?? null, tx.updatedAt,
+        tx.payoutProvider ?? null, tx.payoutAttempts ?? 0, tx.payoutStartedAt ?? null, tx.payoutLastCheckAt ?? null,
       ],
     );
   }
@@ -651,8 +656,8 @@ export class PaymentStore {
         // game-side wallet write and land the balance in the wrong order.
         await client.query(
           `INSERT INTO wallets (user_id, balance, updated_at) VALUES ($1, $2, now())
-           ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance - $2, updated_at = now()`,
-          [userId, value],
+           ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + $2, updated_at = now()`,
+          [userId, -value], // the hold, as a negative delta: a wallet row that does not exist yet starts below zero
         );
         await client.query(
           `INSERT INTO transactions (ref, user_id, type, method, account, amount, fee, payout, currency, status, note, created_at, updated_at)
@@ -695,31 +700,112 @@ export class PaymentStore {
       if (approved) {
         tx.status = STATUS.PAID;
         tx.providerRef = providerRef;
-        if (tx.fee > 0) {
-          await client.query(`UPDATE house_balance SET balance = balance + $1 WHERE id = 1`, [tx.fee]);
-          await client.query(
-            `INSERT INTO house_ledger (at, type, user_id, ref, method, amount, fee) VALUES ($1,'withdraw',$2,$3,$4,$5,$6)`,
-            [now, tx.userId, tx.ref, tx.method, -tx.amount, tx.fee],
-          );
-        }
+        await this._bookWithdrawFee(tx, client, now);
       } else {
         tx.status = status;
         tx.reason = reason;
-        this._creditWallet(tx.userId, -tx.amount); // amount is negative: refund the hold
-        await client.query(
-          `INSERT INTO wallets (user_id, balance, updated_at) VALUES ($1, $2, now())
-           ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + $2, updated_at = now()`,
-          [tx.userId, -tx.amount],
-        );
+        await this._refundHold(tx, client);
       }
       await this._writeTx(tx, client);
       return tx;
     });
   }
 
+  /** The fee of a paid cash-out goes to the house: balance and ledger row. */
+  async _bookWithdrawFee(tx, client, now) {
+    if (!(tx.fee > 0)) return;
+    await client.query(`UPDATE house_balance SET balance = balance + $1 WHERE id = 1`, [tx.fee]);
+    await client.query(
+      `INSERT INTO house_ledger (at, type, user_id, ref, method, amount, fee) VALUES ($1,'withdraw',$2,$3,$4,$5,$6)`,
+      [now, tx.userId, tx.ref, tx.method, -tx.amount, tx.fee],
+    );
+  }
+
+  /** Puts the held amount of a cash-out that will not be paid back into the wallet (memory and Postgres). */
+  async _refundHold(tx, client) {
+    this._creditWallet(tx.userId, -tx.amount); // amount is negative: refund the hold
+    await client.query(
+      `INSERT INTO wallets (user_id, balance, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (user_id) DO UPDATE SET balance = wallets.balance + $2, updated_at = now()`,
+      [tx.userId, -tx.amount],
+    );
+  }
+
+  async _lockWithdrawal(client, ref) {
+    const { rows } = await client.query('SELECT * FROM transactions WHERE ref = $1 FOR UPDATE', [ref]);
+    if (!rows[0] || rows[0].type !== 'withdraw') throw new Error('Withdrawal not found');
+    return txFromRow(rows[0]);
+  }
+
+  // ---------- gateway cash-outs (payouts/): pending -> processing -> paid | failed ----------
+  //
+  // The row is moved to `processing` under a lock BEFORE the gateway is asked to send, so a
+  // second Approve (double click, two operators) fails here instead of paying twice. From
+  // `processing` the only exits are paid (fee booked), failed (hold refunded) or, for a
+  // provider that refused before creating anything, back to pending.
+
+  /** pending -> processing. Throws `Withdrawal already <status>` for anything but a pending row. */
+  async beginPayout(ref, { provider }) {
+    return withTransaction(this.pool, async (client) => {
+      const tx = await this._lockWithdrawal(client, ref);
+      if (tx.status !== STATUS.PENDING) throw new Error(`Withdrawal already ${tx.status}`);
+      const now = iso();
+      Object.assign(tx, { status: STATUS.PROCESSING, payoutProvider: provider, payoutAttempts: (tx.payoutAttempts ?? 0) + 1, payoutStartedAt: now, autoCheck: null, updatedAt: now });
+      await this._writeTx(tx, client);
+      return tx;
+    });
+  }
+
+  /** pending or processing -> paid: the fee is booked to the house and the provider's reference kept. */
+  async completePayout(ref, { providerRef = null, verified = 'gateway' } = {}) {
+    return withTransaction(this.pool, async (client) => {
+      const tx = await this._lockWithdrawal(client, ref);
+      if (tx.status !== STATUS.PENDING && tx.status !== STATUS.PROCESSING) throw new Error(`Withdrawal already ${tx.status}`);
+      const now = iso();
+      Object.assign(tx, { status: STATUS.PAID, providerRef: providerRef ?? tx.providerRef, verified, autoCheck: null, updatedAt: now });
+      await this._bookWithdrawFee(tx, client, now);
+      await this._writeTx(tx, client);
+      return tx;
+    });
+  }
+
+  /** processing -> failed: the provider did not pay, so the hold goes back to the wallet. */
+  async failPayout(ref, { reason, providerRef = null }) {
+    return withTransaction(this.pool, async (client) => {
+      const tx = await this._lockWithdrawal(client, ref);
+      if (tx.status !== STATUS.PROCESSING) throw new Error(`Withdrawal already ${tx.status}`);
+      Object.assign(tx, { status: STATUS.FAILED, reason, providerRef: providerRef ?? tx.providerRef, autoCheck: null, updatedAt: iso() });
+      await this._refundHold(tx, client);
+      await this._writeTx(tx, client);
+      return tx;
+    });
+  }
+
+  /** processing -> pending: the provider refused before creating anything (transfer hours, no float); the operator may try again. */
+  async revertPayout(ref, { note = null } = {}) {
+    return withTransaction(this.pool, async (client) => {
+      const tx = await this._lockWithdrawal(client, ref);
+      if (tx.status !== STATUS.PROCESSING) throw new Error(`Withdrawal already ${tx.status}`);
+      Object.assign(tx, { status: STATUS.PENDING, autoCheck: note, updatedAt: iso() });
+      await this._writeTx(tx, client);
+      return tx;
+    });
+  }
+
+  /** Notes the latest status check on a processing row (no money moves); returns the row. */
+  async recordPayoutCheck(ref, { note = null, providerRef = null } = {}) {
+    await this.pool.query(
+      `UPDATE transactions SET auto_check = $2, payout_last_check_at = $3, provider_ref = COALESCE($4, provider_ref), updated_at = $3
+       WHERE ref = $1 AND type = 'withdraw' AND status = 'processing'`,
+      [ref, note, iso(), providerRef],
+    );
+    return this.findByRef(ref);
+  }
+
   async markFailed(ref, status = STATUS.FAILED, providerRef = null) {
     const tx = await this.findByRef(ref);
     if (!tx || tx.status === STATUS.PAID) return tx ?? null;
+    if (tx.type === 'withdraw') throw new Error('A cash-out is failed with failPayout (it refunds the hold)');
     tx.status = status;
     tx.providerRef = providerRef ?? tx.providerRef;
     tx.updatedAt = iso();
@@ -818,6 +904,9 @@ function txFromRow(row) {
     checkoutUrl: row.checkout_url, providerRef: row.provider_ref, fee: row.fee, credited: row.credited,
     payout: row.payout, verified: row.verified, reason: row.reason, autoCheck: row.auto_check,
     payerPhone: row.payer_phone ?? null, payerName: row.payer_name ?? null,
+    payoutProvider: row.payout_provider ?? null, payoutAttempts: row.payout_attempts ?? 0,
+    payoutStartedAt: row.payout_started_at ? row.payout_started_at.toISOString() : null,
+    payoutLastCheckAt: row.payout_last_check_at ? row.payout_last_check_at.toISOString() : null,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
   };
 }

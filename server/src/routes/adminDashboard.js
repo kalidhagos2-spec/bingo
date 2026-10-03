@@ -2,7 +2,12 @@
  * Operator dashboard: a single self-contained HTML page (no build step) that talks to the
  * /api/admin endpoints with the admin token typed once and kept in localStorage.
  */
-export function dashboardPage({ currency, payout = null, gateway = false }) {
+const escHtml = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** `gateway` is the payout gateway id (sandbox | chapa | telebirr) or null when cash-outs are paid by hand. */
+export function dashboardPage({ currency, payout = null, gateway = null, gatewayLabel = null, gatewayMethods = [] }) {
+  if (gateway === true) gateway = 'telebirr'; // older callers
+  if (gateway && !gatewayMethods.length) gatewayMethods = ['telebirr'];
   const payoutText = payout?.account ? `${payout.method ?? ''} ${payout.account}${payout.name ? ` (${payout.name})` : ''}`.trim() : 'the house account';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Telegram Bingo · Admin</title>
@@ -24,7 +29,7 @@ export function dashboardPage({ currency, payout = null, gateway = false }) {
   section h2{margin:0 0 8px;font-size:15px;display:flex;align-items:center;justify-content:space-between;gap:8px}
   table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:7px 8px;text-align:left;border-bottom:1px solid #1a3a9c;white-space:nowrap}
   th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
-  .pending{color:var(--warn)}.paid{color:var(--ok)}.rejected,.cancelled{color:var(--bad)}
+  .pending{color:var(--warn)}.paid{color:var(--ok)}.rejected,.cancelled,.failed{color:var(--bad)}.processing{color:var(--aqua)}
   .muted{color:var(--muted)}.right{text-align:right}
   input,select{background:#0a1a5c;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:7px 9px;font:inherit}
   #login{max-width:380px;margin:60px auto;text-align:center}#login input{width:100%;margin:10px 0}
@@ -54,10 +59,10 @@ export function dashboardPage({ currency, payout = null, gateway = false }) {
     </nav>
     <section id="tab-withdrawals">
       <h2>Withdrawal requests
-        <span><select id="wstatus"><option value="pending">Pending</option><option value="paid">Paid</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option><option value="all">All</option></select></span>
+        <span><select id="wstatus"><option value="pending">Pending</option><option value="processing">Sending</option><option value="paid">Paid</option><option value="failed">Failed</option><option value="rejected">Rejected</option><option value="cancelled">Cancelled</option><option value="all">All</option></select> <span class="muted" id="gw">Gateway: <b>${gatewayLabel ? escHtml(gatewayLabel) : 'none (paid by hand)'}</b></span></span>
       </h2>
-      <p class="muted" style="margin:0 0 8px">Send each approved payout from <b>${payoutText}</b> to the player's account in the row, then mark it paid with the transaction id.</p>
-      <table><thead><tr><th>When</th><th>Ref</th><th>Player</th><th>Method</th><th>Account</th><th class="right">Amount</th><th class="right">Fee</th><th class="right">Payout</th><th>Status</th><th>Provider ref / reason</th><th></th></tr></thead><tbody id="wrows"></tbody></table>
+      <p class="muted" style="margin:0 0 8px">${gateway ? 'Approve sends the payout through the gateway; its status is checked automatically until it is paid or failed (refunded). "Paid by hand" records a payout you sent yourself.' : `Send each approved payout from <b>${payoutText}</b> to the player's account in the row, then mark it paid with the transaction id.`}</p>
+      <table><thead><tr><th>When</th><th>Ref</th><th>Player</th><th>Method</th><th>Account</th><th class="right">Amount</th><th class="right">Fee</th><th class="right">Payout</th><th>Status</th><th>Gateway</th><th>Provider ref / reason</th><th></th></tr></thead><tbody id="wrows"></tbody></table>
     </section>
     <section id="tab-deposits" style="display:none">
       <h2>Deposits by transfer (pasted receipt ids)
@@ -111,7 +116,8 @@ export function dashboardPage({ currency, payout = null, gateway = false }) {
 <div id="msg"></div>
 <script>
 const CUR = ${JSON.stringify(currency)};
-const GATEWAY = ${JSON.stringify(Boolean(gateway))};
+const GATEWAY = ${JSON.stringify(gateway || null)};
+const GATEWAY_METHODS = ${JSON.stringify(gatewayMethods)};
 const PAYOUT = ${JSON.stringify(payoutText)};
 const $ = (s) => document.querySelector(s);
 const money = (n) => (Number(n ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + CUR;
@@ -125,7 +131,12 @@ let timer = null;
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-admin-token': token, 'ngrok-skip-browser-warning': '1', ...(opts.headers ?? {}) } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? ('HTTP ' + res.status));
+  if (!res.ok) {
+    const err = new Error(data.error ?? ('HTTP ' + res.status));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 function toast(text, bad = false) {
@@ -138,7 +149,7 @@ async function loadSummary() {
   $('#tiles').innerHTML = [
     ['House balance', money(s.house.balance)],
     ['Pending deposits', s.pendingDeposits.count + ' · ' + money(s.pendingDeposits.amount)],
-    ['Pending cash-outs', s.pendingWithdrawals.count + ' · ' + money(s.pendingWithdrawals.amount)],
+    ['Pending cash-outs', s.pendingWithdrawals.count + ' · ' + money(s.pendingWithdrawals.amount) + (s.processingWithdrawals && s.processingWithdrawals.count ? ' · ' + s.processingWithdrawals.count + ' sending' : '')],
     ['Player balances', money(s.walletLiabilities)],
     ['Players', s.players],
     ['Rounds played', s.house.rounds],
@@ -154,9 +165,26 @@ async function loadWithdrawals() {
   $('#wrows').innerHTML = withdrawals.length ? withdrawals.map((w) => '<tr>' +
     '<td>' + when(w.createdAt) + '</td><td><code>' + w.ref + '</code></td><td>' + w.userId + (w.playerName ? ' <span class="muted">' + esc(w.playerName) + '</span>' : '') + '</td><td>' + w.method + '</td><td>' + esc(w.account ?? '') + '</td>' +
     '<td class="right">' + money(-w.amount) + '</td><td class="right">' + money(w.fee) + '</td><td class="right"><b>' + money(w.payout) + '</b></td>' +
-    '<td class="' + w.status + '">' + w.status + '</td><td class="muted">' + esc(w.providerRef ?? w.reason ?? '') + (w.verified ? ' <span class="paid">· ' + esc(w.verified) + '</span>' : '') + '</td>' +
-    '<td>' + (w.status === 'pending' ? '<button class="btn ok" data-approve="' + w.ref + '">Approve</button> <button class="btn bad" data-reject="' + w.ref + '">Reject</button>' : '') + '</td></tr>').join('')
-    : '<tr><td colspan="11" class="muted">Nothing here.</td></tr>';
+    '<td class="' + w.status + '">' + (w.status === 'processing' ? 'sending' : w.status) + '</td>' +
+    '<td class="muted">' + esc(w.payoutProvider ?? '') + (w.payoutAttempts ? ' · try ' + w.payoutAttempts : '') + (w.payoutLastCheckAt ? '<br>checked ' + when(w.payoutLastCheckAt) : '') + '</td>' +
+    '<td class="muted">' + esc(w.providerRef ?? w.reason ?? '') + (w.verified ? ' <span class="paid">· ' + esc(w.verified) + '</span>' : '') + (w.autoCheck ? '<br><span class="' + (/^stale:/.test(w.autoCheck) ? 'rejected' : 'muted') + '">' + esc(w.autoCheck) + '</span>' : '') + '</td>' +
+    '<td>' + withdrawalButtons(w) + '</td></tr>').join('')
+    : '<tr><td colspan="12" class="muted">Nothing here.</td></tr>';
+}
+
+// Pending: send through the gateway when it covers the rail, or record a payout made by hand.
+// Sending: ask the gateway now, or (after checking with it) mark the transfer failed.
+function withdrawalButtons(w) {
+  const d = ' data-ref="' + w.ref + '" data-method="' + esc(w.method ?? '') + '" data-account="' + esc(w.account ?? '') + '" data-payout="' + w.payout + '"';
+  if (w.status === 'pending') {
+    return (GATEWAY && GATEWAY_METHODS.includes(w.method) ? '<button class="btn ok" data-send="' + w.ref + '"' + d + '>Send via ' + esc(GATEWAY) + '</button> ' : '') +
+      '<button class="btn' + (GATEWAY ? '' : ' ok') + '" data-approve="' + w.ref + '"' + d + '>' + (GATEWAY ? 'Paid by hand' : 'Approve') + '</button> ' +
+      '<button class="btn bad" data-reject="' + w.ref + '">Reject</button>';
+  }
+  if (w.status === 'processing') {
+    return '<button class="btn" data-check="' + w.ref + '">Check status</button> <button class="btn bad" data-fail="' + w.ref + '"' + d + '>Mark failed</button>';
+  }
+  return '';
 }
 
 async function loadDeposits() {
@@ -446,21 +474,50 @@ document.addEventListener('click', async (e) => {
   }
   const prow = t.closest('.prow');
   if (prow) togglePlayerLedger(prow).catch((err) => toast(err.message, true));
+  if (t.dataset.send) {
+    const who = t.dataset.method + ' ' + t.dataset.account;
+    if (!confirm('Send ' + money(t.dataset.payout) + ' to ' + who + ' through ' + GATEWAY + '?')) return;
+    const send = (force) => api('/api/admin/withdrawals/' + t.dataset.send + '/approve', { method: 'POST', body: JSON.stringify({ force }) });
+    const done = (r) => {
+      toast(r.status === 'paid' ? 'Sent and marked paid' : r.status === 'failed' ? 'The gateway refused: ' + (r.reason ?? '') + ' (refunded)' : (r.warning ?? 'Sending… the status is checked automatically'), r.status === 'failed');
+      refreshAll();
+    };
+    try { done(await send(false)); }
+    catch (err) {
+      if (err.data && err.data.confirmRequired && confirm(err.message + '\\n\\nSend it anyway?')) {
+        try { done(await send(true)); } catch (e2) { toast(e2.message, true); }
+      } else toast(err.message, true);
+    }
+    return;
+  }
   if (t.dataset.approve) {
-    const providerRef = prompt(GATEWAY
-      ? 'Telebirr transaction id of a payout you already sent — or leave empty to send it through the Telebirr gateway now:'
-      : 'Send the payout from ' + PAYOUT + ' first, then paste its Telebirr transaction id (the receipt is checked before it is marked paid):');
+    const providerRef = prompt('Paste the Telebirr transaction id of the payout you sent from ' + PAYOUT + ' (the receipt is checked before it is marked paid):');
     if (providerRef === null) return;
+    if (!providerRef.trim()) return toast('A transaction id is needed' + (GATEWAY ? ' (use "Send via ' + GATEWAY + '" to pay through the gateway)' : ''), true);
     const approve = (force) => api('/api/admin/withdrawals/' + t.dataset.approve + '/approve', { method: 'POST', body: JSON.stringify({ providerRef, force }) });
     try {
       const r = await approve(false);
-      toast(r.verified === 'gateway' ? 'Sent through the gateway · marked paid' : r.verified === 'receipt' ? 'Receipt verified · marked paid' : 'Marked as paid');
+      toast(r.verified === 'receipt' ? 'Receipt verified · marked paid' : 'Marked as paid');
       refreshAll();
     } catch (err) {
       if (/^Receipt check failed/.test(err.message) && confirm(err.message + '\\n\\nMark it as paid anyway?')) {
         try { await approve(true); toast('Marked as paid (unverified)'); refreshAll(); } catch (e2) { toast(e2.message, true); }
       } else toast(err.message, true);
     }
+    return;
+  }
+  if (t.dataset.check) {
+    try { const r = await api('/api/admin/withdrawals/' + t.dataset.check + '/check', { method: 'POST' }); toast((r.status === 'processing' ? 'Still sending: ' : r.status + ': ') + (r.check && r.check.reason ? r.check.reason : ''), r.status === 'failed'); refreshAll(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
+  if (t.dataset.fail) {
+    const reason = prompt('Only if ' + (GATEWAY || 'the provider') + ' confirmed that nothing was paid. Reason shown to the player (the hold is refunded):', 'Transfer could not be completed');
+    if (reason === null) return;
+    if (!confirm('Mark ' + money(t.dataset.payout) + ' to ' + t.dataset.method + ' ' + t.dataset.account + ' as NOT paid and refund the hold?')) return;
+    try { await api('/api/admin/withdrawals/' + t.dataset.fail + '/fail', { method: 'POST', body: JSON.stringify({ reason }) }); toast('Marked failed and refunded'); refreshAll(); }
+    catch (err) { toast(err.message, true); }
+    return;
   }
   if (t.dataset.reject) {
     const reason = prompt('Reason shown to the player (the hold is refunded):', 'Account could not be verified');

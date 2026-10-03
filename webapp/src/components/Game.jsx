@@ -87,6 +87,8 @@ export default function Game({ user, onNav, haptic, active = true }) {
     socket.on('session:kicked', ({ reason }) => window.dispatchEvent(new CustomEvent('tgb-suspended', { detail: `Account suspended: ${reason}` })));
     socket.on('session:me', setMe);
     socket.on('wallet:balance', ({ balance }) => setMe((m) => ({ ...m, balance })));
+    // A cash-out was paid, failed or rejected: the Wallet screen (mounted beside this one) refreshes itself.
+    socket.on('wallet:update', (update) => window.dispatchEvent(new CustomEvent('tgb-wallet', { detail: update })));
     socket.on('lobby:rooms', setLobby);
     // Operator announcements: pushed live, and listed on connect via the API below.
     socket.on('announcement', (a) => {

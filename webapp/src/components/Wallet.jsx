@@ -7,6 +7,7 @@ const ICONS = { telebirr: '📱', cbebirr: '🏦', boa: '🏛️', game: '🎱',
 const STATUS_STYLE = {
   paid: 'text-lime-400',
   pending: 'text-amber-300',
+  processing: 'text-sky-300',
   failed: 'text-rose-400',
   cancelled: 'text-slate-400',
   rejected: 'text-rose-400',
@@ -80,6 +81,16 @@ export default function Wallet({ onNav, hint = null, haptic }) {
       alive = false;
     };
   }, []);
+
+  // The server pushes cash-out settlements (paid / failed / rejected) through the game socket.
+  useEffect(() => {
+    const onUpdate = (e) => {
+      refresh().catch(() => {});
+      haptic?.(e.detail?.status === 'paid' ? 'success' : 'warning');
+    };
+    window.addEventListener('tgb-wallet', onUpdate);
+    return () => window.removeEventListener('tgb-wallet', onUpdate);
+  }, [refresh, haptic]);
 
   // Poll a pending online top-up until it settles.
   useEffect(() => {
@@ -190,7 +201,7 @@ export default function Wallet({ onNav, hint = null, haptic }) {
   const outGross = Number(outAmount) || 0;
   const accountOk = account.replace(/\D/g, '').length >= 9; // a full Ethiopian mobile number
   const outNet = afterFee(outGross, wd.feePercent);
-  const pendingOut = (wallet?.transactions ?? []).filter((tx) => tx.type === 'withdraw' && tx.status === 'pending');
+  const pendingOut = (wallet?.transactions ?? []).filter((tx) => tx.type === 'withdraw' && (tx.status === 'pending' || tx.status === 'processing'));
   const held = pendingOut.reduce((s, tx) => s - tx.amount, 0);
   const short = hint?.need && wallet ? Math.max(0, hint.need - wallet.balance) : 0;
   // Sentences with a bold account number in the middle: the text before and after it.
@@ -460,11 +471,13 @@ export default function Wallet({ onNav, hint = null, haptic }) {
                       <span className="block font-bold">
                         {ICONS[tx.method]} {fmt(-tx.amount)} {currencyLabel(tx.currency)} → {tx.account}
                       </span>
-                      <span className="block text-xs text-amber-300">{t('wallet.cashout.pending')}</span>
+                      <span className={"block text-xs " + (tx.status === 'processing' ? 'text-sky-300' : 'text-amber-300')}>{tx.status === 'processing' ? t('status.processing') : t('wallet.cashout.pending')}</span>
                     </span>
-                    <button type="button" disabled={busy} onClick={() => cancel(tx.ref)} className="text-xs font-black text-rose-300">
-                      {t('wallet.cashout.cancel')}
-                    </button>
+                    {tx.status === 'pending' && (
+                      <button type="button" disabled={busy} onClick={() => cancel(tx.ref)} className="text-xs font-black text-rose-300">
+                        {t('wallet.cashout.cancel')}
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>

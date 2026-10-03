@@ -16,7 +16,9 @@ import { attachRealtime } from './realtime.js';
 import { createDemoBots, isDemoId } from './demoBots.js';
 import { serveWebapp } from './webapp.js';
 import { createDepositVerifier } from './verifier.js';
-import { createTelebirrPayout } from './payouts/telebirr.js';
+import { buildPayout } from './payouts/registry.js';
+import { createPayoutWatcher } from './payouts/watcher.js';
+import { createPlayerNotifier } from './notify.js';
 
 if (!config.publicUrl) {
   console.warn('[server] PUBLIC_URL is not set; payment return/webhook URLs will be relative and only work locally.');
@@ -82,6 +84,21 @@ const auth = telegramAuth({
   suspension: (userId) => store.suspension(userId),
 });
 if (config.autoApproveDeposits) console.warn('[payments] AUTO_APPROVE_DEPOSITS is on: every deposit is credited without checking the receipt (TEST MODE)');
+const notifier = createPlayerNotifier({ io, store, botToken: config.botToken });
+// Approved cash-outs are sent by this gateway (PAYOUT_PROVIDER), and the watcher settles the
+// ones it accepted but has not confirmed yet. No gateway: paid by hand, confirmed by receipt id.
+const payout = buildPayout(config);
+const payoutWatcher = createPayoutWatcher({
+  store,
+  payout,
+  intervalMs: config.payout.checkMs,
+  minAgeMs: config.payout.checkMinAgeMs,
+  maxAgeHours: config.payout.giveUpHours,
+  unknownGraceMs: config.payout.unknownGraceMs,
+  onSettled: notifier.withdrawal,
+});
+payoutWatcher.start();
+console.log(`[payouts] gateway: ${payout ? `${payout.id} (${payout.label}) for ${payout.methods.join(', ')}, checked every ${Math.round(config.payout.checkMs / 1000)}s` : 'none (cash-outs are paid by hand and confirmed by receipt id)'}`);
 app.use(
   '/api/payments',
   paymentsRouter({
@@ -89,7 +106,9 @@ app.use(
     store,
     providers,
     auth,
-    notifyBalance: (userId, balance) => io.to(`user:${userId}`).emit('wallet:balance', { balance }),
+    notifyBalance: notifier.balance,
+    payout,
+    payoutWatcher,
   }),
 );
 app.use('/api/profile', profileRouter({ config, store, auth }));
@@ -103,9 +122,7 @@ if (Object.keys(settings.overrides()).length) console.log('[settings] operator o
 const verifier = createDepositVerifier({ store, intervalMs: config.receiptRecheckMs, maxAgeHours: config.receiptRecheckHours });
 if (!config.autoApproveDeposits) verifier.start();
 console.log(`[verifier] Telebirr receipts re-checked every ${Math.round(config.receiptRecheckMs / 1000)}s for ${config.receiptRecheckHours}h`);
-const payout = createTelebirrPayout(config.telebirr);
-console.log(`[payouts] Telebirr disbursement gateway: ${payout.available ? 'configured' : 'not configured (cash-outs paid by hand, confirmed by receipt id)'}`);
-app.use('/api/admin', adminRouter({ config, store, manager, notifyBalance: (userId, balance) => io.to(`user:${userId}`).emit('wallet:balance', { balance }), kick, closeRoom, settings, announcements, verifier, payout }));
+app.use('/api/admin', adminRouter({ config, store, manager, notifyBalance: notifier.balance, notifyWithdrawal: notifier.withdrawal, kick, closeRoom, settings, announcements, verifier, payout, payoutWatcher }));
 
 // After every API route: the Mini App itself, when this image carries it (single-service deploy).
 serveWebapp(app);
@@ -132,6 +149,7 @@ async function shutdown(signal) {
   }, 10_000);
   try {
     verifier.stop();
+    payoutWatcher.stop();
     demoBots.stop();
     // Tables live only in memory: a round cut short by this restart is void, so its stakes go
     // back to the players (and they are told) before the sockets close and the writes flush.
