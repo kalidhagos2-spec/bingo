@@ -301,8 +301,10 @@ test('a player may hold up to maxCartelas, each paying the stake, and can win on
   assert.equal(wallet.balances[1], 100);
 });
 
-test('players without a cartela sit the round out and can join the next one', () => {
-  const { room, timers } = makeRoom();
+test('players without a cartela are sent back to the lobby when the round starts', () => {
+  const { room, timers, events } = makeRoom();
+  const dropped = [];
+  room.onDropped = (id) => dropped.push(id);
   room.join(u1);
   room.join(u2);
   room.join(u3);
@@ -310,12 +312,51 @@ test('players without a cartela sit the round out and can join the next one', ()
   room.choose(2, 34);
   assert.ok(timers.fire()); // countdown
   assert.equal(room.phase, PHASE.PLAYING);
-  assert.equal(room.cardFor(3), null);
+  assert.equal(room.players.has(3), false);
+  assert.deepEqual(dropped, [3]);
   assert.throws(() => room.mark(3, room.called[0]), /not in this round/);
   assert.throws(() => room.choose(3, 50), /Wait for the next round/);
   const state = room.publicState();
-  assert.deepEqual(state.players.map((p) => p.playing), [true, true, false]);
+  assert.deepEqual(state.players.map((p) => p.playing), [true, true]);
   assert.equal(state.ready, 2);
+});
+
+test('manager: a new player never lands on a table whose round is running', () => {
+  const manager = new RoomManager({ emit() {}, emitTo() {} });
+  const a = manager.joinStake(u1, 0);
+  manager.joinStake(u2, 0);
+  a.choose(1, 1);
+  a.choose(2, 2);
+  a.start();
+  assert.equal(a.phase, PHASE.PLAYING);
+  const fresh = manager.joinStake(u3, 0);
+  assert.notEqual(fresh.code, a.code);
+  assert.equal(fresh.phase, PHASE.WAITING);
+  assert.throws(() => manager.join({ id: 9, first_name: 'Z' }, a.code), /already in progress/);
+  const row = manager.list().find((l) => l.stake === 0);
+  assert.equal(row.room.code, fresh.code);
+  assert.equal(row.room.joinable, true);
+  manager.shutdown();
+});
+
+test('a card with two complete lines is credited to the line the balls completed first', () => {
+  const { room } = makeRoom();
+  room.join(u1);
+  room.join(u2);
+  room.choose(1, 1);
+  room.choose(2, 2);
+  room.start();
+  const card = room.players.get(1).cards[0];
+  const row = (r) => [0, 1, 2, 3, 4].map((c) => r * 5 + c);
+  // the last row is completed first, then the first row (which comes first in row order)
+  const late = row(0).filter((i) => card.cells[i].value !== null).map((i) => card.cells[i].value);
+  const early = row(4).map((i) => card.cells[i].value);
+  room.called = [...early, ...late];
+  for (const i of [...row(0), ...row(4)]) card.marks[i] = true;
+  room.claim(1, 1);
+  assert.deepEqual(room.winner.line, row(4));
+  assert.equal(room.winner.ball, early.at(-1));
+  assert.equal(room.winner.ballCall, early.length);
 });
 
 test('leaving frees the cartela and cartelaCount never drops below maxPlayers', () => {

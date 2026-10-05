@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { cardForCartela, initialMarks, completedLines, cornersComplete, winningPattern, drawOrder, letterFor, CARTELA_COUNT } from './bingo.js';
+import { cardForCartela, initialMarks, completedLines, cornersComplete, winningPattern, drawOrder, letterFor, CARTELA_COUNT, CORNERS } from './bingo.js';
 
 export const PHASE = Object.freeze({
   WAITING: 'waiting', // registration open, not enough players have picked a cartela yet
@@ -79,6 +79,7 @@ export class Room {
     this.startsAt = null;
     this.startedAt = null; // when the current round began calling
     this.timer = null;
+    this.onDropped = null; // (userId) => void: the manager forgets a player the room dropped
   }
 
   // ---------- membership ----------
@@ -236,6 +237,14 @@ export class Room {
     this.startsAt = null;
     this.startedAt = this.now();
     this.pool = this.poolFor(this.tickets);
+    // Registration is over: anyone seated without a cartela is not in this round and is sent
+    // back to the lobby rather than left watching a game they cannot play.
+    for (const p of [...this.players.values()]) {
+      if (p.cards.length) continue;
+      this.players.delete(p.id);
+      this.onDropped?.(p.id);
+      this.emitTo(p.id, 'room:missed', { reason: 'The round started without you. Join a new table to play.' });
+    }
     for (const p of this.players.values()) {
       for (const c of p.cards) c.marks = initialMarks(); // fresh marks
       if (p.cards.length) this.emitTo(p.id, 'game:card', this.cardFor(p.id));
@@ -333,13 +342,27 @@ export class Room {
       );
     }
     const card = player.cards.find((c) => c.cartela === chosen.cartela);
-    const line = chosen.pattern ?? completedLines(card.marks)[0] ?? null;
+    const line = this.earliestPattern(card, chosen.pattern) ?? completedLines(card.marks)[0] ?? null;
     // Belt and braces: marks can only be set for called numbers, and the win is checked once
     // more against the balls themselves before any money moves.
     const unproven = winningNumbers(card, line, chosen.full).filter((n) => !this.called.includes(n));
     if (unproven.length) throw new Error(`Not yet: ${unproven.join(', ')} ${unproven.length === 1 ? 'has' : 'have'} not been called`);
     this.finish(player, line, chosen.full, card);
     return p;
+  }
+
+  /**
+   * The pattern on `card` that the balls completed first. A card left unclaimed for a few calls
+   * can hold several (two rows, or a row and the corners): the win, and the ball it is credited
+   * to, is the earliest one, not whichever comes first in row order.
+   */
+  earliestPattern(card, fallback = null) {
+    if (this.rules.fullCard || this.rules.linesToWin > 1) return fallback;
+    const callOf = new Map(this.called.map((n, i) => [n, i]));
+    const doneAt = (cells) => Math.max(...cells.map((i) => (card.cells[i].value === null ? -1 : (callOf.get(card.cells[i].value) ?? Infinity))));
+    const candidates = completedLines(card.marks);
+    if (cornersComplete(card.marks)) candidates.push([...CORNERS]);
+    return candidates.reduce((best, c) => (best === null || doneAt(c) < doneAt(best) ? c : best), null) ?? fallback;
   }
 
   finish(player, line = null, full = false, card = player?.cards[0] ?? null) {

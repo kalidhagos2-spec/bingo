@@ -32,6 +32,9 @@ export class RoomManager {
       emit: (event, payload) => this.emit(code, event, payload),
       emitTo: this.emitTo,
     });
+    room.onDropped = (userId) => {
+      if (this.userRoom.get(userId) === code) this.userRoom.delete(userId);
+    };
     this.rooms.set(code, room);
     return room;
   }
@@ -70,6 +73,7 @@ export class RoomManager {
     this.assertStake(stake);
     const current = this.roomOf(user.id);
     if (current?.stake === stake && current.canJoin()) return current;
+    // Never seat a player at a table whose round is already running: they get a new one.
     const open = this.openRooms(stake);
     return open[0] ? this.join(user, open[0].code) : this.join(user, this.newRoom(stake).code);
   }
@@ -135,7 +139,7 @@ export class RoomManager {
       const room = open ?? busy ?? null;
       return {
         stake,
-        room: room ? room.summary() : null,
+        room: room ? { ...room.summary(), joinable: room === open } : null,
         houseCutPercent: rules.houseCutPercent,
         maxPrize: rules.maxPrize,
         prize: {

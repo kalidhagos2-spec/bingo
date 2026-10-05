@@ -13,7 +13,14 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   // webapp is deployed on a different origin (e.g. Vercel) than this server.
   const io = new Server(httpServer, { path: '/socket.io', cors: { origin: allowedOrigins.length ? allowedOrigins : false } });
 
-  const emitTo = (userId, event, payload) => io.to(userChannel(userId)).emit(event, payload);
+  const emitTo = (userId, event, payload) => {
+    io.to(userChannel(userId)).emit(event, payload);
+    // A player the table dropped at the start of a round stops receiving that table's traffic.
+    if (event === 'room:missed') {
+      io.in(userChannel(userId)).socketsLeave([...io.sockets.adapter.rooms.keys()].filter((r) => r.startsWith('room:')));
+      io.in(userChannel(userId)).socketsJoin(LOBBY);
+    }
+  };
   // Table state is the big message (every player and their cartelas), and a full table changes
   // many times a second while people pick. A change of phase goes out at once; everything else
   // is sent at most every STATE_MS, always the latest state. (The player who acted already has
@@ -46,7 +53,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   const lobbySoon = () => {
     lobbyTimer ??= setTimeout(() => {
       lobbyTimer = null;
-      io.emit('lobby:rooms', manager.list());
+      io.to(LOBBY).emit('lobby:rooms', manager.list()); // only players who are looking at the lobby
     }, LOBBY_MS).unref();
   };
 
@@ -132,6 +139,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
       balance: store ? store.balance(user.id) : null,
     });
     socket.emit('lobby:rooms', manager.list());
+    if (!manager.roomOf(user.id)) socket.join(LOBBY);
 
     // A client that sends an unexpected extra argument (or omits one) can cause Socket.io to
     // bind a handler's `cb` parameter to something that isn't a function (e.g. a payload
@@ -153,6 +161,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
 
     const attach = (room) => {
       for (const r of socket.rooms) if (r.startsWith('room:')) socket.leave(r);
+      socket.leave(LOBBY);
       socket.join(roomChannel(room.code));
       console.log(`[rooms] ${user.id} seated in ${room.code} (${room.size} players)`);
       return room;
@@ -190,6 +199,8 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
       const room = manager.roomOf(user.id);
       if (room) socket.leave(roomChannel(room.code));
+      socket.join(LOBBY);
+      socket.emit('lobby:rooms', manager.list());
       console.log(`[rooms] ${user.id} left ${room?.code ?? '-'}`);
       manager.leave(user.id);
       safeCb(cb, { ok: true, room: null, card: null });
@@ -250,6 +261,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
     const channel = roomChannel(String(code ?? '').toUpperCase());
     io.to(channel).emit('room:closed', { reason });
     const closed = manager.close(code);
+    io.in(channel).socketsJoin(LOBBY);
     io.in(channel).socketsLeave(channel);
     return closed;
   };
@@ -257,6 +269,7 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
   return { io, manager, kick, closeRoom, broadcastSoon };
 }
 
+const LOBBY = 'lobby';
 const LOBBY_MS = 500;
 const STATE_MS = 700;
 const MARKS_FLUSH_MS = 5000;

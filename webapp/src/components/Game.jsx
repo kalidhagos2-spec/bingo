@@ -84,6 +84,15 @@ export default function Game({ user, onNav, haptic, active = true }) {
       setError(reason);
       haptic?.('warning');
     });
+    // The round started while this player had no cartela: back to the lobby, free to join a new table.
+    socket.on('room:missed', ({ reason }) => {
+      setRoom(null);
+      setCards(null);
+      setOver(null);
+      setCurrent(null);
+      setReady(false);
+      setError(reason);
+    });
     socket.on('session:kicked', ({ reason }) => window.dispatchEvent(new CustomEvent('tgb-suspended', { detail: `Account suspended: ${reason}` })));
     socket.on('session:me', setMe);
     socket.on('wallet:balance', ({ balance }) => setMe((m) => ({ ...m, balance })));
@@ -145,10 +154,14 @@ export default function Game({ user, onNav, haptic, active = true }) {
   }, [room?.round, active]);
 
   // Tick for countdown displays (lobby rows and the pick screen).
+  // Only while something is actually counting down: a running round does not re-render twice a second.
+  const counting = room ? room.phase === 'countdown' : lobby.some((l) => l.room?.phase === 'countdown');
   useEffect(() => {
+    if (!counting) return undefined;
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(timer);
-  }, []);
+  }, [counting]);
 
   const act = useCallback(async (event, payload) => {
     setError('');
@@ -686,7 +699,7 @@ function LobbyStatus({ room, now }) {
     const s = Math.max(0, Math.ceil((room.startsAt - now) / 1000));
     return <span className="font-black text-white tabular-nums">{t('lobby.status.startsIn', { s })}</span>;
   }
-  if (room.phase === 'playing') return <span className="font-bold">{t('lobby.status.playing', { n: room.callIndex })}</span>;
+  if (room.phase === 'playing') return <span className="font-bold">{t('lobby.status.playing', { n: room.callIndex })} · {t('lobby.status.newTable')}</span>;
   if (room.phase === 'finished') return <span className="font-bold">{t('lobby.status.reopening')}</span>;
   return <span className="font-bold text-lime-300">{t('lobby.status.registering')}</span>;
 }
