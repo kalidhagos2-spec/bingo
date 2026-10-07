@@ -126,6 +126,10 @@ export default function Profile({ user, onNav, haptic }) {
           </div>
         </section>
 
+        <InviteAndAlerts haptic={haptic} />
+
+        <PlayResponsibly haptic={haptic} />
+
         <form onSubmit={save} className="rounded-2xl bg-ink-800 border border-ink-600/60 p-4 flex flex-col gap-3">
           <h2 className="font-black">{t('profile.fields')}</h2>
           <label className="flex flex-col gap-1 text-xs text-slate-300">
@@ -173,6 +177,164 @@ export default function Profile({ user, onNav, haptic }) {
         <BottomNav active="profile" onNav={onNav} badges={{ profile: profile && !profile.complete }} />
       </div>
     </main>
+  );
+}
+
+/** Opt-in Telegram alert when a table starts, and the player's invite link (server: src/referral.js). */
+function InviteAndAlerts({ haptic }) {
+  const t = useT();
+  const [alerts, setAlerts] = useState(false);
+  const [ref, setRef] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    api('/profile/prefs').then((p) => setAlerts(p.tableAlerts)).catch(() => {});
+    api('/profile/referral').then(setRef).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = !alerts;
+    setAlerts(next);
+    try {
+      const p = await api('/profile/prefs', { method: 'PUT', body: { tableAlerts: next } });
+      setAlerts(p.tableAlerts);
+      haptic?.('light');
+    } catch {
+      setAlerts(!next);
+    }
+  };
+
+  const share = () => {
+    const tg = window.Telegram?.WebApp;
+    const url = `https://t.me/share/url?url=${encodeURIComponent(ref.link)}&text=${encodeURIComponent(t('invite.shareText'))}`;
+    if (tg?.openTelegramLink) tg.openTelegramLink(url);
+    else window.open(url, '_blank', 'noopener');
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(ref.link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable: the share button still works */
+    }
+  };
+
+  return (
+    <section className="rounded-2xl bg-ink-800 border border-ink-600/60 p-4 flex flex-col gap-3">
+      <label className="flex items-center justify-between gap-3">
+        <span>
+          <span className="block font-black">🔔 {t('alerts.title')}</span>
+          <span className="block text-[11px] text-slate-400">{t('alerts.help')}</span>
+        </span>
+        <input type="checkbox" checked={alerts} onChange={toggle} className="h-6 w-6 accent-lime-400" />
+      </label>
+      {ref?.link && (
+        <div className="flex flex-col gap-2 border-t border-ink-600/60 pt-3">
+          <span className="font-black">🎁 {t('invite.title')}</span>
+          <span className="text-[11px] text-slate-400">{t('invite.help', { coins: ref.rewardCoins, min: ref.minDeposit, max: ref.maxFriends })}</span>
+          <span className="text-xs text-amber-300 font-bold">{t('invite.count', { n: ref.friendsRewarded })}</span>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={share} className="rounded-xl bg-gradient-to-b from-lime-400 to-green-600 py-2 text-sm font-black active:scale-95">{t('invite.share')}</button>
+            <button type="button" onClick={copy} className="rounded-xl bg-ink-900 border border-ink-600 py-2 text-sm font-black active:scale-95">{copied ? t('invite.copied') : t('invite.copy')}</button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Self-set daily deposit limit and self-exclusion (server: src/limits.js). */
+function PlayResponsibly({ haptic }) {
+  const t = useT();
+  const [limits, setLimits] = useState(null);
+  const [amount, setAmount] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const [confirm, setConfirm] = useState(null);
+
+  useEffect(() => {
+    api('/profile/limits').then((l) => {
+      setLimits(l);
+      setAmount(l.depositLimit ?? '');
+    }).catch((e) => setError(e.message));
+  }, []);
+
+  const saveLimit = async () => {
+    setError('');
+    setNote('');
+    try {
+      const r = await api('/profile/limits', { method: 'PUT', body: { depositLimit: amount === '' ? null : Number(amount) } });
+      setLimits(r.limits);
+      setNote(r.applied ? t('rg.limitSaved') : t('rg.limitLater', { when: new Date(r.effectiveAt).toLocaleString() }));
+      haptic?.('success');
+    } catch (e) {
+      setError(e.message);
+      haptic?.('error');
+    }
+  };
+
+  const exclude = async (days) => {
+    setError('');
+    try {
+      const r = await api('/profile/limits/exclude', { method: 'POST', body: { days } });
+      setLimits(r.limits);
+      setConfirm(null);
+      haptic?.('warning');
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const until = limits?.excludedUntil;
+  return (
+    <section className="rounded-2xl bg-ink-800 border border-ink-600/60 p-4 flex flex-col gap-3">
+      <h2 className="font-black">🛡️ {t('rg.title')}</h2>
+      <p className="text-xs text-slate-300">{t('rg.help')}</p>
+      <label className="flex flex-col gap-1 text-xs text-slate-300">
+        {t('rg.dailyLimit')}
+        <span className="flex gap-2">
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="decimal"
+            placeholder={t('rg.noLimit')}
+            className="flex-1 min-w-0 rounded-xl bg-ink-900 border border-ink-600 px-3 py-2.5 text-base font-bold text-slate-100 outline-none focus:border-aqua-400"
+          />
+          <button type="button" onClick={saveLimit} className="rounded-xl bg-ink-700 border border-aqua-400 px-4 font-black text-aqua-300 active:scale-95">
+            {t('rg.set')}
+          </button>
+        </span>
+      </label>
+      {limits?.pending && <p className="text-[11px] text-amber-300">{t('rg.pending', { when: new Date(limits.pending.at).toLocaleString() })}</p>}
+      {note && <p className="text-xs text-lime-400">{note}</p>}
+
+      <div className="flex flex-col gap-2">
+        <span className="text-xs text-slate-300">{t('rg.exclude')}</span>
+        {until ? (
+          <p className="rounded-xl bg-rose-500/15 border border-rose-500/40 px-3 py-2 text-sm font-bold text-rose-300">{t('rg.excludedUntil', { date: new Date(until).toLocaleDateString() })}</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {(limits?.exclusionDays ?? [1, 7, 30]).map((d) => (
+              <button key={d} type="button" onClick={() => setConfirm(d)} className="rounded-xl bg-ink-900 border border-ink-600 py-2 text-sm font-black text-slate-200 active:scale-95">
+                {t('rg.days', { n: d })}
+              </button>
+            ))}
+          </div>
+        )}
+        {confirm && (
+          <div className="rounded-xl bg-rose-500/15 border border-rose-500/40 p-3 flex flex-col gap-2">
+            <p className="text-xs text-rose-200">{t('rg.confirm', { n: confirm })}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setConfirm(null)} className="rounded-xl bg-ink-800 border border-ink-600 py-2 text-sm font-bold">{t('rg.cancel')}</button>
+              <button type="button" onClick={() => exclude(confirm)} className="rounded-xl bg-rose-500 text-ink-950 py-2 text-sm font-black">{t('rg.yes')}</button>
+            </div>
+          </div>
+        )}
+      </div>
+      {error && <p className="text-sm text-rose-400">{tError(error)}</p>}
+    </section>
   );
 }
 

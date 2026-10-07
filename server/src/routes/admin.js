@@ -1,4 +1,5 @@
 import { Router, json } from 'express';
+import { depositRisk } from '../risk.js';
 import { dashboardPage } from './adminDashboard.js';
 import { houseAccounts } from './payments.js';
 import { verifyPayoutReceipt } from '../verifier.js';
@@ -18,6 +19,13 @@ function decorate(config, store, rows) {
 
 /** Largest single manual wallet adjustment, a guard against a slipped zero. */
 const MAX_ADJUST = 50_000;
+
+/** Deposits with a risk score and reasons, riskiest first among the pending ones. */
+async function withRisk(config, store, rows) {
+  const decorated = decorate(config, store, rows);
+  const history = await store.depositHistory(decorated.map((d) => d.userId));
+  return decorated.map((d) => ({ ...d, risk: depositRisk({ tx: d, profile: store.profile(d.userId), history: history.get(Number(d.userId)) }) }));
+}
 
 export function adminRouter({ config, store, manager = null, notifyBalance = () => {}, notifyWithdrawal = () => {}, kick = () => {}, closeRoom = null, settings = null, announcements = null, verifier = null, payout = null, payoutWatcher = null, receiptFetch = globalThis.fetch }) {
   const router = Router();
@@ -165,7 +173,9 @@ export function adminRouter({ config, store, manager = null, notifyBalance = () 
   router.get('/deposits', async (req, res) => {
     const status = String(req.query.status ?? 'pending');
     // depositsByStatus already returns newest-first.
-    res.json({ deposits: decorate(config, store, await store.depositsByStatus(status, 100)) });
+    const deposits = await withRisk(config, store, await store.depositsByStatus(status, 100));
+    if (status === 'pending') deposits.sort((a, b) => b.risk.score - a.risk.score); // riskiest first; stable for ties
+    res.json({ deposits });
   });
 
   /** Re-runs the Telebirr receipt check for one pending deposit and credits it if the receipt matches. */

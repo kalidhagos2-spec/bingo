@@ -50,16 +50,18 @@ export function profileView(user, profile) {
  * /api/profile — the player profile the bot collects at sign-up, editable from the Mini App.
  * POST /sync is called by the bot (shared secret = BOT_TOKEN); the rest needs Telegram auth.
  */
-export function profileRouter({ config, store, auth }) {
+export function profileRouter({ config, store, auth, manager = null }) {
   const router = Router();
 
   router.post('/sync', json(), async (req, res) => {
     const token = req.get('x-bot-token') ?? '';
     const allowed = config.botToken ? token === config.botToken : config.devAllowAnon;
     if (!allowed) return res.status(401).json({ error: 'Bad bot token' });
-    const { id, name, phone, email, username, firstName, lastName, signedUpAt } = req.body ?? {};
+    const { id, name, phone, email, username, firstName, lastName, signedUpAt, referredBy } = req.body ?? {};
     const userId = Number(id);
     if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'id required' });
+    // The bot passes the inviter when someone opens its /start link: ref_<id>.
+    if (referredBy !== undefined && Number.isInteger(Number(referredBy)) && Number(referredBy) > 0) await store.setReferrer(userId, Number(referredBy));
     const taken = email && emailOwner(store, normalizeEmail(email), userId);
     if (taken) return res.status(409).json({ error: 'Email already used by another account' });
     // Phones are stored normalised (+251…) so transfers by phone number find the player.
@@ -97,6 +99,46 @@ export function profileRouter({ config, store, auth }) {
 
   router.get('/', (req, res) => {
     res.json(profileView(req.user, store.profile(req.user.id)));
+  });
+
+  // Opt-in Telegram alert when a table is about to start, and the player's invite link.
+  router.get('/prefs', (req, res) => res.json({ tableAlerts: Boolean(store.prefs(req.user.id).tableAlerts) }));
+  router.put('/prefs', json(), async (req, res) => {
+    await store.setTableAlerts(req.user.id, req.body?.tableAlerts);
+    res.json({ tableAlerts: Boolean(store.prefs(req.user.id).tableAlerts) });
+  });
+  router.get('/referral', (req, res) => {
+    const link = config.botUsername ? `https://t.me/${config.botUsername}?start=ref_${req.user.id}` : null;
+    res.json({ link, ...store.referral(req.user.id) });
+  });
+
+  // Responsible-play controls the player sets on themselves (see ../limits.js).
+  router.get('/limits', (req, res) => res.json(store.limits(req.user.id)));
+
+  router.put('/limits', json(), async (req, res) => {
+    const raw = req.body?.depositLimit;
+    const amount = raw === null || raw === '' || raw === undefined ? null : Number(raw);
+    try {
+      const result = await store.setDepositLimit(req.user.id, amount);
+      res.json({ ...result, limits: store.limits(req.user.id) });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  router.post('/limits/age', async (req, res) => {
+    await store.confirmAge(req.user.id);
+    res.json({ limits: store.limits(req.user.id) });
+  });
+
+  router.post('/limits/exclude', json(), async (req, res) => {
+    try {
+      await store.selfExclude(req.user.id, Number(req.body?.days));
+      manager?.leave(req.user.id); // an open table gives the stake back
+      res.json({ limits: store.limits(req.user.id) });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   router.put('/', json(), async (req, res) => {

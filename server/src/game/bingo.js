@@ -1,4 +1,4 @@
-import { randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 
 export const SIZE = 5;
 export const FREE_INDEX = 12;
@@ -81,6 +81,40 @@ export function winningPattern(marks, linesToWin = 1) {
   const lines = completedLines(marks);
   if (lines.length >= linesToWin) return lines[0];
   return cornersComplete(marks) ? [...CORNERS] : null;
+}
+
+/**
+ * Provable fairness. Before registration opens a round gets a random `seed`; only its hash (the
+ * `commit`) is shown. The ball order is a pure function of the seed, so once the seed is revealed
+ * at the end anybody can check that the balls came out exactly as committed to. The same
+ * algorithm lives in webapp/src/lib/fair.js — change both together.
+ */
+export const newSeed = () => randomBytes(32).toString('hex');
+export const commitOf = (seed) => createHash('sha256').update(seed).digest('hex');
+
+/** Uniform integers from SHA-256(seed:counter) blocks, rejection-sampled (n <= 255). */
+export function seededPick(seed) {
+  let counter = 0;
+  let block = Buffer.alloc(0);
+  let pos = 0;
+  const nextByte = () => {
+    if (pos >= block.length) {
+      block = createHash('sha256').update(`${seed}:${counter++}`).digest();
+      pos = 0;
+    }
+    return block[pos++];
+  };
+  return (n) => {
+    const limit = 256 - (256 % n);
+    let b;
+    do b = nextByte();
+    while (b >= limit);
+    return b % n;
+  };
+}
+
+export function drawOrderFromSeed(seed) {
+  return shuffle(Array.from({ length: MAX_NUMBER }, (_, i) => i + 1), seededPick(seed));
 }
 
 /** Shuffled draw order for the caller. */

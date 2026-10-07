@@ -135,6 +135,11 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
     if (!Number.isFinite(value) || value < config.minTopup || value > config.maxTopup) {
       return res.status(400).json({ error: `Amount must be between ${config.minTopup} and ${config.maxTopup} ${config.currency}` });
     }
+    try {
+      await store.assertCanDeposit(req.user.id, value);
+    } catch (err) {
+      return res.status(403).json({ error: err.message });
+    }
     const tx = await store.createTransaction({ userId: req.user.id, method, amount: value, currency: config.currency });
     try {
       const { checkoutUrl, providerRef = null } = await provider.initiate(tx, req.user);
@@ -164,6 +169,11 @@ export function paymentsRouter({ config, store, providers, auth, notifyBalance =
     if (!house) return res.status(400).json({ error: 'Transfers are not accepted through this method' });
     if (!Number.isFinite(value) || value < config.minTopup || value > config.maxTopup) {
       return res.status(400).json({ error: `Amount must be between ${config.minTopup} and ${config.maxTopup} ${config.currency}` });
+    }
+    try {
+      await store.assertCanDeposit(req.user.id, value);
+    } catch (err) {
+      return res.status(403).json({ error: err.message });
     }
     let tx;
     try {

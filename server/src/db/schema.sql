@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS profiles (
   economy       JSONB,
   suspended     JSONB
 );
+-- Self-set responsible-play controls: daily deposit limit and self-exclusion (see src/limits.js).
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS limits JSONB;
+-- Opt-in table alerts and referral bookkeeping (see src/referral.js).
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS prefs JSONB;
 CREATE INDEX IF NOT EXISTS profiles_email_idx ON profiles (lower(email));
 CREATE INDEX IF NOT EXISTS profiles_phone_idx ON profiles (phone);
 
@@ -93,6 +97,10 @@ ALTER TABLE rounds ADD COLUMN IF NOT EXISTS demo_stakes NUMERIC(14,2) NOT NULL D
 -- The balls of the round in calling order, so any win can be checked afterwards (winner.numbers
 -- must all be in here). NULL for rounds recorded before this column existed.
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS called JSONB;
+-- Provable fairness: the seed the ball order was derived from (revealed after the round) and
+-- its SHA-256 commitment, which players saw before they picked. NULL for older rounds.
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS seed TEXT;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS seed_commit TEXT;
 CREATE INDEX IF NOT EXISTS rounds_at_idx ON rounds (at DESC);
 CREATE INDEX IF NOT EXISTS rounds_room_idx ON rounds (room);
 

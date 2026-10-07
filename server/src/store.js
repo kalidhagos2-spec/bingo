@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto';
+import { prefsOf, setReferrer, referralDue, alertTargets, REWARD_COINS, MAX_REWARDED, MIN_DEPOSIT } from './referral.js';
+import { limitsView, setDepositLimit, selfExclude, confirmAge, exclusionUntil, assertDepositAllowed, DAY_MS } from './limits.js';
 import { ensureEconomy, addCoins, track } from './economy.js';
 import { withTransaction } from './db/pool.js';
+
+export const MAX_PENDING_DEPOSITS = 5;
 
 export const STATUS = Object.freeze({
   PENDING: 'pending',
@@ -204,11 +208,11 @@ export class PaymentStore {
       const profile = this.data.profiles[userId];
       if (!profile) return null;
       return this.pool.query(
-        `INSERT INTO profiles (user_id, name, phone, email, username, first_name, last_name, signed_up_at, updated_at, stats, economy, suspended)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        `INSERT INTO profiles (user_id, name, phone, email, username, first_name, last_name, signed_up_at, updated_at, stats, economy, suspended, limits, prefs)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (user_id) DO UPDATE SET
            name = $2, phone = $3, email = $4, username = $5, first_name = $6, last_name = $7,
-           signed_up_at = $8, updated_at = $9, stats = $10, economy = $11, suspended = $12`,
+           signed_up_at = $8, updated_at = $9, stats = $10, economy = $11, suspended = $12, limits = $13, prefs = $14`,
         [
           userId,
           profile.name ?? null,
@@ -222,6 +226,8 @@ export class PaymentStore {
           JSON.stringify(profile.stats ?? { games: 0, wins: 0, winnings: 0 }),
           profile.economy ? JSON.stringify(profile.economy) : null,
           profile.suspended ? JSON.stringify(profile.suspended) : null,
+          profile.limits ? JSON.stringify(profile.limits) : null,
+          profile.prefs ? JSON.stringify(profile.prefs) : null,
         ],
       );
     });
@@ -257,7 +263,7 @@ export class PaymentStore {
    * Free Bingo win, updated in memory at once; the round record, house ledger and the
    * touched profiles are written to Postgres in the background, in one transaction.
    */
-  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, demoStakes = 0, realStakes = stakes, realPrize = prize, houseTake = 0, room = null, round = null, numbersCalled = null, called = null, startedAt = null, freeCoins = 0, now = Date.now() }) {
+  recordRound({ participants, players = null, winnerId = null, winner = null, prize = 0, stake = 0, stakes = 0, demoStakes = 0, realStakes = stakes, realPrize = prize, houseTake = 0, room = null, round = null, numbersCalled = null, called = null, startedAt = null, freeCoins = 0, seed = null, commit = null, now = Date.now() }) {
     const roundRow = {
       at: new Date(now),
       room,
@@ -271,6 +277,8 @@ export class PaymentStore {
       houseTake,
       numbersCalled,
       called,
+      seed,
+      commit,
       durationMs: startedAt ? Math.max(0, now - startedAt) : null,
       freeCoins: stake === 0 && winnerId ? freeCoins : 0,
     };
@@ -290,9 +298,9 @@ export class PaymentStore {
     this._enqueue(() =>
       withTransaction(this.pool, async (client) => {
         await client.query(
-          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins, demo_stakes, called)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins, roundRow.demoStakes, roundRow.called ? JSON.stringify(roundRow.called) : null],
+          `INSERT INTO rounds (at, room, round, stake, players, winner, prize, stakes, house_take, numbers_called, duration_ms, free_coins, demo_stakes, called, seed, seed_commit)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [roundRow.at, roundRow.room, roundRow.round, roundRow.stake, JSON.stringify(roundRow.players), roundRow.winner ? JSON.stringify(roundRow.winner) : null, roundRow.prize, roundRow.stakes, roundRow.houseTake, roundRow.numbersCalled, roundRow.durationMs, roundRow.freeCoins, roundRow.demoStakes, roundRow.called ? JSON.stringify(roundRow.called) : null, roundRow.seed, roundRow.commit],
         );
         if (houseTake !== 0) { // negative: a real player won a pool that demo players had padded
           await client.query(`UPDATE house_balance SET balance = balance + $1 WHERE id = 1`, [houseTake]);
@@ -355,6 +363,114 @@ export class PaymentStore {
       depositsReceived: money(depositAgg.rows[0].amount),
       depositFees: money(depositAgg.rows[0].fee),
     };
+  }
+
+  // ---------- table alerts and referrals (see referral.js) ----------
+
+  prefs(userId) {
+    return { tableAlerts: false, ...(this.profile(userId)?.prefs ?? {}) };
+  }
+
+  async setTableAlerts(userId, on) {
+    return this.updateProfile(userId, (profile) => {
+      prefsOf(profile).tableAlerts = Boolean(on);
+    });
+  }
+
+  /** Remembers who invited `userId` (see referral.setReferrer for the rules). */
+  async setReferrer(userId, referrerId) {
+    return this.updateProfile(userId, (profile) => setReferrer(profile, referrerId, this.profile(referrerId), userId));
+  }
+
+  referral(userId) {
+    const p = prefsOf(this.profile(userId) ?? {});
+    return { invitedBy: p.referredBy ?? null, friendsRewarded: p.referralsPaid ?? 0, maxFriends: MAX_REWARDED, rewardCoins: REWARD_COINS, minDeposit: MIN_DEPOSIT };
+  }
+
+  /** Both sides get coins once the invited player's first real deposit is confirmed. In memory now; persisted in the background. */
+  _rewardReferral(userId, credited, now = Date.now()) {
+    const profile = this.profile(userId);
+    if (!profile?.prefs?.referredBy) return;
+    const referrerId = referralDue(profile, this.profile(profile.prefs.referredBy), credited, now);
+    if (!referrerId) return;
+    for (const id of [userId, referrerId]) addCoins(this.ensureProfile(id), REWARD_COINS, id === userId ? 'Welcome bonus: first deposit' : 'A friend you invited made a first deposit', now);
+    this._persistProfile(userId);
+    this._persistProfile(referrerId);
+  }
+
+  /** Who to message that a table of `stake` is starting (see referral.alertTargets); marks them as alerted. */
+  tableAlertTargets({ stake, isConnected, now = Date.now() }) {
+    const ids = alertTargets({
+      profiles: this.data.profiles, stake, isConnected, now,
+      balanceOf: (id) => this.balance(id),
+      blocked: (id) => Boolean(this.suspension(id)) || Boolean(this.selfExclusion(id)),
+      adultOk: (id) => this.ageConfirmed(id),
+    });
+    for (const id of ids) prefsOf(this.data.profiles[id]).lastAlertAt = new Date(now).toISOString();
+    for (const id of ids) this._persistProfile(id);
+    return ids;
+  }
+
+  // ---------- responsible play (see limits.js) ----------
+
+  limits(userId, now = this.now()) {
+    return limitsView(this.profile(userId) ?? {}, now);
+  }
+
+  async setDepositLimit(userId, amount, now = this.now()) {
+    return this.updateProfile(userId, (profile) => setDepositLimit(profile, amount, now));
+  }
+
+  async selfExclude(userId, days, now = this.now()) {
+    return this.updateProfile(userId, (profile) => selfExclude(profile, days, now));
+  }
+
+  async confirmAge(userId, now = this.now()) {
+    return this.updateProfile(userId, (profile) => confirmAge(profile, now));
+  }
+
+  ageConfirmed(userId) {
+    return Boolean(this.profile(userId)?.limits?.ageConfirmedAt);
+  }
+
+  /** ISO time the player's self-exclusion ends, or null when they are free to play. */
+  selfExclusion(userId, now = this.now()) {
+    return exclusionUntil(this.profile(userId) ?? {}, now);
+  }
+
+  /** What the player has put in over the last 24 h (confirmed, or still waiting to be). */
+  async depositedLastDay(userId, now = this.now()) {
+    const { rows } = await this.pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM transactions
+       WHERE user_id = $1 AND type IN ('topup','deposit') AND status IN ('pending','paid') AND created_at >= $2`,
+      [userId, new Date(now - DAY_MS)],
+    );
+    return Number(rows[0].total);
+  }
+
+  /** What each of these players has deposited before, for the operator's risk score (see risk.js). */
+  async depositHistory(userIds, now = this.now()) {
+    const ids = [...new Set(userIds)];
+    const out = new Map(ids.map((id) => [id, { paidCount: 0, paidTotal: 0, pendingCount: 0, last24hCount: 0 }]));
+    if (!ids.length) return out;
+    const { rows } = await this.pool.query(
+      `SELECT user_id,
+              count(*) FILTER (WHERE status = 'paid')::int AS paid_count,
+              COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_total,
+              count(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+              count(*) FILTER (WHERE created_at >= $2)::int AS last24h
+       FROM transactions WHERE user_id = ANY($1) AND type IN ('topup','deposit') GROUP BY user_id`,
+      [ids, new Date(now - DAY_MS)],
+    );
+    for (const r of rows) out.set(Number(r.user_id), { paidCount: r.paid_count, paidTotal: Number(r.paid_total), pendingCount: r.pending_count, last24hCount: r.last24h });
+    return out;
+  }
+
+  /** Throws the reason when this deposit is blocked by the player's own limit or exclusion. */
+  async assertCanDeposit(userId, amount, now = this.now()) {
+    const profile = this.profile(userId);
+    if (!profile?.limits) return;
+    assertDepositAllowed(profile, amount, await this.depositedLastDay(userId, now), now);
   }
 
   // ---------- suspensions ----------
@@ -431,6 +547,27 @@ export class PaymentStore {
     sql += ` ORDER BY id DESC LIMIT $${params.length}`;
     const { rows } = await this.pool.query(sql, params);
     return rows.map(roundFromRow);
+  }
+
+  /**
+   * Finished rounds for the player-facing fairness screen, newest first. No player ids or wallet
+   * figures: names (already visible at the table), the winner, the balls, and the seed proof.
+   */
+  async publicRounds(limit = 30, id = null) {
+    const { rows } = await this.pool.query(
+      `SELECT * FROM rounds ${id ? 'WHERE id = $2' : ''} ORDER BY id DESC LIMIT $1`,
+      id ? [1, id] : [Math.min(limit, 100)],
+    );
+    return rows.map((row) => {
+      const r = roundFromRow(row);
+      const w = r.winner;
+      return {
+        id: Number(row.id), at: r.at, room: r.room, round: r.round, stake: Number(r.stake), prize: Number(r.prize),
+        players: r.players.length, numbersCalled: r.numbersCalled,
+        winner: w && { name: w.name, cartela: w.cartela, full: w.full, line: w.line, numbers: w.numbers, ball: w.ball ?? null, ballCall: w.ballCall ?? null, demo: Boolean(w.demo) },
+        called: r.called, seed: r.seed, commit: r.commit,
+      };
+    });
   }
 
   async roundCount() {
@@ -554,6 +691,7 @@ export class PaymentStore {
           [now, tx.userId, tx.ref, tx.method, tx.amount, fee],
         );
       }
+      this._rewardReferral(tx.userId, tx.credited);
       return tx;
     });
   }
@@ -589,6 +727,9 @@ export class PaymentStore {
     if (!(value > 0)) throw new Error('Amount must be positive');
     if (!/^[A-Z0-9-]{6,32}$/.test(id)) throw new Error('Enter the transaction / receipt id exactly as shown on the receipt (6–32 letters and digits)');
     if (await this.receiptUsed(method, id)) throw new Error('This transaction id has already been submitted');
+    // A flood of unconfirmed receipts is the usual shape of deposit fraud: cap what one player can have waiting.
+    const waiting = await this.pool.query(`SELECT count(*)::int AS n FROM transactions WHERE user_id = $1 AND type = 'deposit' AND status = 'pending'`, [userId]);
+    if (waiting.rows[0].n >= MAX_PENDING_DEPOSITS) throw new Error('You already have several deposits waiting for confirmation. Wait for them to be confirmed before sending more.');
     const now = iso();
     const name = payerName ? String(payerName).trim().slice(0, 60) || null : null;
     const tx = {
@@ -894,6 +1035,8 @@ function profileFromRow(row) {
     stats: row.stats ?? { games: 0, wins: 0, winnings: 0 },
     economy: row.economy ?? undefined,
     suspended: row.suspended ?? undefined,
+    limits: row.limits ?? undefined,
+    prefs: row.prefs ?? undefined,
   };
 }
 
@@ -913,7 +1056,7 @@ function txFromRow(row) {
 
 function roundFromRow(row) {
   return {
-    at: row.at.toISOString(), room: row.room, round: row.round, stake: row.stake,
+    id: row.id, at: row.at.toISOString(), room: row.room, round: row.round, stake: row.stake, seed: row.seed ?? null, commit: row.seed_commit ?? null,
     players: row.players ?? [], winner: row.winner ?? null, prize: row.prize, stakes: row.stakes, demoStakes: row.demo_stakes ?? 0,
     houseTake: row.house_take, numbersCalled: row.numbers_called, called: row.called ?? null, durationMs: row.duration_ms, freeCoins: row.free_coins,
   };

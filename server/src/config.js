@@ -24,6 +24,7 @@ const publicUrl = (env('PUBLIC_URL') || env('WEBAPP_URL') || env('RENDER_EXTERNA
 export const config = {
   port: num('PORT', 3000),
   botToken,
+  botUsername: env('BOT_USERNAME').replace(/^@/, ''), // for share links: https://t.me/<bot>?start=ref_<id>
   publicUrl,
   currency: 'ETB',
   minTopup: num('MIN_TOPUP', 10),

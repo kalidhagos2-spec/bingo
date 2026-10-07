@@ -18,7 +18,7 @@ export function withdrawalMessage(tx) {
 }
 
 /** Live pushes to a player's open Mini App, and Telegram messages for things worth a notification. */
-export function createPlayerNotifier({ io, store, botToken = '', fetchImpl = globalThis.fetch, log = console }) {
+export function createPlayerNotifier({ io, store, botToken = '', webappUrl = '', fetchImpl = globalThis.fetch, log = console }) {
   const room = (userId) => io.to(`user:${userId}`);
 
   function balance(userId, value = store.balance(userId)) {
@@ -37,5 +37,19 @@ export function createPlayerNotifier({ io, store, botToken = '', fetchImpl = glo
     }
   }
 
-  return { balance, withdrawal };
+  /**
+   * A table has enough players and its countdown started: tell the opted-in players who are not in
+   * the app right now (at most one alert per player per half hour, see referral.ALERT_GAP_MS).
+   */
+  function tableStarting({ stake, seconds = 40 }) {
+    if (!botToken) return 0;
+    const ids = store.tableAlertTargets({ stake, isConnected: (id) => (io.sockets.adapter.rooms.get(`user:${id}`)?.size ?? 0) > 0 });
+    const label = stake > 0 ? `${etb(stake)} ETB` : 'Free';
+    const text = `🎯 A ${label} Bingo table is about to start (${seconds}s to pick a cartela).\n🎯 የ${label} ቢንጎ ጠረጴዛ ሊጀምር ነው (ካርቴላ ለመምረጥ ${seconds} ሰከንድ)።`;
+    const replyMarkup = webappUrl.startsWith('https://') ? { inline_keyboard: [[{ text: '▶️ Play / ተጫወት', web_app: { url: webappUrl } }]] } : undefined;
+    for (const chatId of ids) sendTelegram({ botToken, chatId, text, replyMarkup, fetchImpl });
+    return ids.length;
+  }
+
+  return { balance, withdrawal, tableStarting };
 }

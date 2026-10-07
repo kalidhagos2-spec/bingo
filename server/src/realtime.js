@@ -1,13 +1,14 @@
 import { Server } from 'socket.io';
 import { verifyInitData, suspendedMessage } from './auth.js';
 import { RoomManager } from './game/manager.js';
+import { AGE_REQUIRED } from './limits.js';
 
 /**
  * Socket.io layer for multiplayer rooms. Each socket is authenticated with Telegram
  * initData (handshake.auth.initData). Users are identified by Telegram id, so a
  * reconnecting player is re-attached to their room and card.
  */
-export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stakes, store = null, allowedOrigins = [], isDemo = () => false }) {
+export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stakes, store = null, allowedOrigins = [], isDemo = () => false, onCountdown = () => {} }) {
   // origin:false (default) keeps this same-origin only, matching the docker-compose setup
   // where nginx reverse-proxies /socket.io to this server. Set ALLOWED_ORIGINS when the
   // webapp is deployed on a different origin (e.g. Vercel) than this server.
@@ -33,7 +34,13 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
     stateSlots.set(code, slot);
     slot.payload = payload;
     if (payload.phase !== slot.phase) {
+      const was = slot.phase;
       slot.phase = payload.phase;
+      // A table just got enough players: worth a Telegram alert, but only when a real player is ready.
+      if (payload.phase === 'countdown' && was !== 'countdown') {
+        const room = manager.rooms.get(code);
+        if (room && [...room.players.values()].some((p) => p.cards.length && !isDemo(p.id))) onCountdown({ stake: room.stake, seconds: Math.round(room.rules.countdownMs / 1000), private: room.isPrivate });
+      }
       clearTimeout(slot.timer);
       slot.timer = null;
       io.to(roomChannel(code)).emit(event, payload);
@@ -186,14 +193,23 @@ export function attachRealtime(httpServer, { botToken, devAllowAnon, rules, stak
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
       safeCb(cb, { ok: true, rooms: manager.list() });
     });
+    // A self-excluded player may not sit at any table until the exclusion ends.
+    const assertNotExcluded = () => {
+      const until = store?.selfExclusion(user.id);
+      if (until) throw new Error(`You have excluded yourself from playing until ${until.slice(0, 10)}`);
+    };
+    // Paid tables need a one-time "I am 18 or older" confirmation (POST /api/profile/limits/age).
+    const assertAdult = (stake) => {
+      if (store && stake > 0 && !store.ageConfirmed(user.id)) throw new Error(AGE_REQUIRED);
+    };
     socket.on('room:create', (payload, cb) => {
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
-      ack(cb, () => attach(manager.create(user, Number(payload?.stake ?? 0))));
+      ack(cb, () => (assertNotExcluded(), assertAdult(Number(payload?.stake ?? 0)), attach(manager.create(user, Number(payload?.stake ?? 0)))));
     });
     // Join a public table by stake, or a private room by code.
     socket.on('room:join', (payload, cb) => {
       if (typeof payload === 'function') [payload, cb] = [{}, payload];
-      ack(cb, () => attach(payload?.code ? manager.join(user, payload.code) : manager.joinStake(user, Number(payload?.stake ?? 0))));
+      ack(cb, () => (assertNotExcluded(), assertAdult(payload?.code ? manager.rooms.get(String(payload.code).toUpperCase())?.stake ?? 0 : Number(payload?.stake ?? 0)), attach(payload?.code ? manager.join(user, payload.code) : manager.joinStake(user, Number(payload?.stake ?? 0)))));
     });
     socket.on('room:leave', (payload, cb) => {
       if (typeof payload === 'function') [payload, cb] = [{}, payload];

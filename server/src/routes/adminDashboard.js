@@ -69,7 +69,7 @@ export function dashboardPage({ currency, payout = null, gateway = null, gateway
         <span><select id="dstatus"><option value="pending">Pending</option><option value="paid">Confirmed</option><option value="rejected">Rejected</option><option value="all">All</option></select></span>
       </h2>
       <p class="muted" style="margin:0 0 8px">Check the transaction id against your Telebirr / bank statement, then confirm (credits the wallet minus the deposit fee) or reject.</p>
-      <table><thead><tr><th>Submitted</th><th>Ref</th><th>Player</th><th>Method</th><th>Paid into</th><th>Transaction id</th><th class="right">Amount</th><th>Status</th><th>Check</th><th></th></tr></thead><tbody id="drows"></tbody></table>
+      <table><thead><tr><th>Submitted</th><th>Ref</th><th>Player</th><th>Method</th><th>Paid into</th><th>Transaction id</th><th class="right">Amount</th><th>Risk</th><th>Status</th><th>Check</th><th></th></tr></thead><tbody id="drows"></tbody></table>
     </section>
     <section id="tab-players" style="display:none">
       <h2>Players <span><input id="pq" placeholder="search id, name, phone, email" style="width:240px"> <span class="muted" id="pcount"></span></span></h2>
@@ -196,9 +196,10 @@ async function loadDeposits() {
     '<td>' + esc(d.account ?? '') + (d.accountName ? ' <span class="muted">(' + esc(d.accountName) + ')</span>' : '') + '</td>' +
     '<td><code>' + esc(d.providerRef) + '</code>' + (d.method === 'telebirr' ? ' <a href="https://transactioninfo.ethiotelecom.et/receipt/' + encodeURIComponent(d.providerRef) + '" target="_blank" rel="noopener" style="color:var(--aqua)">receipt ↗</a>' : '') + '</td>' +
     '<td class="right"><b>' + money(d.amount) + '</b>' + (d.credited != null ? ' <span class="muted">→ ' + money(d.credited) + '</span>' : '') + '</td>' +
+    '<td title="' + esc((d.risk ? d.risk.reasons : []).join('; ')) + '">' + (d.risk ? '<span class="' + (d.risk.level === 'high' ? 'rejected' : d.risk.level === 'medium' ? 'pending' : 'muted') + '">' + d.risk.level + ' ' + d.risk.score + '</span>' + (d.risk.reasons.length ? '<br><span class="muted" style="font-size:11px">' + esc(d.risk.reasons.slice(0, 2).join(', ')) + '</span>' : '') : '') + '</td>' +
     '<td class="' + d.status + '">' + d.status + '</td><td class="muted">' + esc(d.verified ? 'verified: ' + d.verified : d.autoCheck ?? d.reason ?? '') + '</td>' +
     '<td>' + (d.status === 'pending' ? (d.method === 'telebirr' ? '<button class="btn" data-dverify="' + d.ref + '">Verify</button> ' : '') + '<button class="btn ok" data-dapprove="' + d.ref + '">Confirm</button> <button class="btn bad" data-dreject="' + d.ref + '">Reject</button>' : '') + '</td></tr>').join('')
-    : '<tr><td colspan="10" class="muted">Nothing here.</td></tr>';
+    : '<tr><td colspan="11" class="muted">Nothing here.</td></tr>';
 }
 
 async function loadHouse() {

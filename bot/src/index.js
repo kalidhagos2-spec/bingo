@@ -75,6 +75,20 @@ async function syncProfile(user) {
   }
 }
 
+/** Tells the game server who invited this new player (the /start link carried `ref_<id>`). Non-fatal. */
+async function syncReferral(userId, referrerId) {
+  try {
+    await fetch(`${API_URL}/api/profile/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-bot-token': BOT_TOKEN },
+      body: JSON.stringify({ id: userId, referredBy: referrerId }),
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch (err) {
+    console.warn(`[referral] could not record inviter ${referrerId} for ${userId}: ${err.message}`);
+  }
+}
+
 // ---------- sign-up flow ----------
 
 /** Two steps: the player picks a username (one tap on their Telegram name, or typed), then shares (or skips) their phone. */
@@ -129,7 +143,9 @@ async function continueSignup(ctx, user, apply) {
 // ---------- commands ----------
 
 bot.start(async (ctx) => {
-  const { user } = await store.register(ctx.from);
+  const { user, created } = await store.register(ctx.from);
+  const inviter = /^ref_(\d+)$/.exec(ctx.startPayload ?? '')?.[1];
+  if (created && inviter) await syncReferral(user.id, Number(inviter));
   if (!hasSignedUp(user)) {
     await beginSignup(ctx, user);
     return;

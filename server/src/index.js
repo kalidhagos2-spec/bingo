@@ -9,6 +9,7 @@ import { buildProviders } from './payments/registry.js';
 import { paymentsRouter } from './routes/payments.js';
 import { profileRouter } from './routes/profile.js';
 import { economyRouter } from './routes/economy.js';
+import { roundsRouter } from './routes/rounds.js';
 import { adminRouter } from './routes/admin.js';
 import { createSettings } from './settings.js';
 import { createAnnouncements } from './announcements.js';
@@ -61,6 +62,9 @@ const { io, manager, kick, closeRoom, broadcastSoon } = attachRealtime(httpServe
   store,
   allowedOrigins: config.allowedOrigins,
   isDemo: isDemoId,
+  onCountdown: (table) => {
+    if (!table.private) notifier.tableStarting(table);
+  },
 });
 
 // Demo players (DEMO_BOTS > 0): house bots that sit at the public tables and play like people.
@@ -84,7 +88,7 @@ const auth = telegramAuth({
   suspension: (userId) => store.suspension(userId),
 });
 if (config.autoApproveDeposits) console.warn('[payments] AUTO_APPROVE_DEPOSITS is on: every deposit is credited without checking the receipt (TEST MODE)');
-const notifier = createPlayerNotifier({ io, store, botToken: config.botToken });
+const notifier = createPlayerNotifier({ io, store, botToken: config.botToken, webappUrl: config.publicUrl });
 // Approved cash-outs are sent by this gateway (PAYOUT_PROVIDER), and the watcher settles the
 // ones it accepted but has not confirmed yet. No gateway: paid by hand, confirmed by receipt id.
 const payout = buildPayout(config);
@@ -111,8 +115,9 @@ app.use(
     payoutWatcher,
   }),
 );
-app.use('/api/profile', profileRouter({ config, store, auth }));
+app.use('/api/profile', profileRouter({ config, store, auth, manager }));
 app.use('/api/economy', economyRouter({ store, auth }));
+app.use('/api/rounds', roundsRouter({ store, auth }));
 const announcements = createAnnouncements({ store, io, botToken: config.botToken });
 app.get('/api/announcements', auth, async (_req, res) => res.json({ announcements: await announcements.active() }));
 

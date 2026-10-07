@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { cardForCartela, initialMarks, completedLines, cornersComplete, winningPattern, drawOrder, letterFor, CARTELA_COUNT, CORNERS } from './bingo.js';
+import { cardForCartela, initialMarks, completedLines, cornersComplete, winningPattern, letterFor, CARTELA_COUNT, CORNERS, newSeed, commitOf, drawOrderFromSeed } from './bingo.js';
 
 export const PHASE = Object.freeze({
   WAITING: 'waiting', // registration open, not enough players have picked a cartela yet
@@ -79,7 +79,14 @@ export class Room {
     this.startsAt = null;
     this.startedAt = null; // when the current round began calling
     this.timer = null;
+    this.freshSeed();
     this.onDropped = null; // (userId) => void: the manager forgets a player the room dropped
+  }
+
+  /** A new round's seed, fixed (and its hash published) before anyone can pick a cartela. */
+  freshSeed() {
+    this.seed = newSeed();
+    this.commit = commitOf(this.seed);
   }
 
   // ---------- membership ----------
@@ -232,7 +239,7 @@ export class Room {
     this.round += 1;
     this.called = [];
     this.forfeited = [];
-    this.drawPool = drawOrder();
+    this.drawPool = drawOrderFromSeed(this.seed);
     this.winner = null;
     this.startsAt = null;
     this.startedAt = this.now();
@@ -370,7 +377,7 @@ export class Room {
     this.clearTimer();
     this.phase = PHASE.FINISHED;
     if (player) {
-      this.winner = { id: player.id, name: player.name, cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks, numbers: winningNumbers(card, line, full), call: this.called.length, ...this.winningBall(winningNumbers(card, line, full)) };
+      this.winner = { id: player.id, name: player.name, demo: this.isDemo(player.id), cartela: card.cartela, line, full, prize: this.pool, card: card.cells, marks: card.marks, numbers: winningNumbers(card, line, full), call: this.called.length, ...this.winningBall(winningNumbers(card, line, full)) };
       if (this.pool > 0) this.wallet?.credit(player.id, this.pool, `Prize for room ${this.code}`);
       // A demo player's win costs the real players nothing: their stakes for this round go back.
       // That includes a real player who left or lost their connection before the end.
@@ -395,6 +402,8 @@ export class Room {
       players: seated.map((p) => ({ id: p.id, name: p.name, cartela: p.cards[0].cartela, cartelas: p.cards.map((c) => c.cartela), marked: markedCount(p), ...(p.left ? { left: true } : {}) })),
       winnerId: player?.id ?? null,
       winner: player ? { id: player.id, name: player.name, cartela: card.cartela, full, line, numbers: winningNumbers(card, line, full), ...this.winningBall(winningNumbers(card, line, full)), ...(demoWin ? { demo: true } : {}) } : null,
+      seed: this.seed, // revealed now the round is over; `commit` was public from the start
+      commit: this.commit,
       called: [...this.called], // the balls in the order they came out: the proof of the win
       prize: player ? this.pool : 0,
       stake: this.stake,
@@ -408,7 +417,7 @@ export class Room {
       numbersCalled: this.called.length,
       startedAt: this.startedAt,
     });
-    this.emit('game:over', { winner: this.winner, called: this.called, round: this.round, pool: this.pool });
+    this.emit('game:over', { winner: this.winner, called: this.called, round: this.round, pool: this.pool, seed: this.seed, commit: this.commit });
     this.broadcast();
     this.setTimer(() => this.reopen(), this.rules.restartDelayMs);
   }
@@ -426,6 +435,7 @@ export class Room {
     this.winner = null;
     this.pool = 0;
     this.called = []; // the finished round leaves nothing on the board: a new table starts blank
+    this.freshSeed();
     for (const p of this.players.values()) p.cards = [];
     this.broadcast();
   }
@@ -483,16 +493,25 @@ export class Room {
     };
   }
 
-  publicState() {
+  /**
+   * What clients see of the table. `slim` is the room-wide broadcast: it leaves out what a client
+   * already has (the rules never change mid-table; the called balls arrive one by one as
+   * `game:number` while playing), which is most of the bytes. The client keeps its previous value.
+   */
+  publicState({ slim = false } = {}) {
+    const playing = this.phase === PHASE.PLAYING;
     return {
       ...this.summary(),
       round: this.round,
-      rules: this.rules,
-      called: this.called,
+      commit: this.commit,
+      seed: this.phase === PHASE.FINISHED ? this.seed : null, // revealed only once the round is over
+      ...(slim ? {} : { rules: this.rules }),
+      ...(slim && playing ? {} : { called: this.called }),
       current: this.called.at(-1) ?? null,
       winner: this.winner && {
         id: this.winner.id,
         name: this.winner.name,
+        demo: this.winner.demo,
         cartela: this.winner.cartela,
         line: this.winner.line,
         full: this.winner.full,
@@ -501,8 +520,9 @@ export class Room {
       players: [...this.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
+        demo: this.isDemo(p.id), // a house player: shown as a bot so nobody mistakes it for a person
         cartelas: p.cards.map((c) => c.cartela),
-        cartela: p.cards[0]?.cartela ?? null,
+        ...(slim ? {} : { cartela: p.cards[0]?.cartela ?? null }), // the first of `cartelas`; only the operator dashboard reads it
         playing: p.cards.length > 0 && this.phase !== PHASE.WAITING && this.phase !== PHASE.COUNTDOWN,
         marked: markedCount(p),
       })),
@@ -510,7 +530,7 @@ export class Room {
   }
 
   broadcast() {
-    this.emit('room:state', this.publicState());
+    this.emit('room:state', this.publicState({ slim: true }));
   }
 }
 

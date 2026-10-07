@@ -106,7 +106,8 @@ export default function Game({ user, onNav, haptic, active = true }) {
     });
     socket.on('announcement:removed', ({ id }) => setAnnouncements((list) => list.filter((x) => x.id !== id)));
     socket.on('room:state', (state) => {
-      setRoom(state);
+      // Broadcasts leave out what never changes (rules) or arrives separately (called, while playing).
+      setRoom((prev) => (prev && prev.code === state.code ? { ...state, rules: state.rules ?? prev.rules, called: state.called ?? prev.called } : state));
       if (state.phase === 'playing') setOver(null);
       if (state.phase === 'waiting') {
         setCurrent(null);
@@ -163,7 +164,9 @@ export default function Game({ user, onNav, haptic, active = true }) {
     return () => clearInterval(timer);
   }, [counting]);
 
+  const errorRef = useRef('');
   const act = useCallback(async (event, payload) => {
+    errorRef.current = '';
     setError('');
     setBusy(true);
     try {
@@ -177,6 +180,7 @@ export default function Game({ user, onNav, haptic, active = true }) {
         onNav('wallet', { need: payload?.stake ?? roomRef.current?.stake ?? 0 });
         return null;
       }
+      errorRef.current = e.message;
       setError(e.message);
       return null;
     } finally {
@@ -184,11 +188,23 @@ export default function Game({ user, onNav, haptic, active = true }) {
     }
   }, [onNav]);
 
+  const [ageFor, setAgeFor] = useState(null); // stake waiting on the 18+ confirmation
   const join = async (stake) => {
     setJoining(stake);
     haptic?.('light');
-    await act('room:join', { stake });
+    const res = await act('room:join', { stake });
     setJoining(null);
+    if (!res && stake > 0 && /18 or older/.test(errorRef.current)) setAgeFor(stake);
+  };
+  const confirmAge = async () => {
+    const stake = ageFor;
+    setAgeFor(null);
+    try {
+      await api('/profile/limits/age', { method: 'POST' });
+      await join(stake);
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   // Nothing is on the board until the round runs: during registration and the countdown the
@@ -445,8 +461,24 @@ export default function Game({ user, onNav, haptic, active = true }) {
           )}
         </section>
 
+        <button onClick={() => onNav('history')} className="rounded-2xl bg-ink-800 border border-ink-600/60 px-3 py-2.5 text-sm font-black text-aqua-300 active:scale-[0.99]">
+          🔍 {t('lobby.fairness')}
+        </button>
+
         {error && <p className="text-sm text-rose-400 text-center">{tError(error)}</p>}
         </div>
+
+        {ageFor !== null && (
+          <Overlay>
+            <div className="rounded-3xl bg-ink-800 border border-aqua-400/40 p-5 text-center">
+              <p className="text-3xl mb-2">🔞</p>
+              <p className="font-black mb-1">{t('age.title')}</p>
+              <p className="text-xs text-slate-300 mb-4">{t('age.body')}</p>
+              <button onClick={confirmAge} className="w-full py-2.5 rounded-xl bg-gradient-to-b from-lime-400 to-green-600 font-black active:scale-95">{t('age.yes')}</button>
+              <button onClick={() => { setAgeFor(null); setError(''); }} className="mt-2 text-sm text-slate-400">{t('age.no')}</button>
+            </div>
+          </Overlay>
+        )}
 
         <BottomNav
           active="play"
@@ -736,6 +768,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
         <p className="text-[11px] text-slate-400">
           {room.stake > 0 ? t('pick.perCartela', { amount: etb(room.stake), n: room.tickets ?? 0, prize: etb(room.pool) }) : t('game.freeTable')} · {t('pick.inRoom', { n: room.players.length })}
         </p>
+        {room.commit && <p className="font-mono text-[10px] text-slate-500">{t('pick.fairCode', { code: room.commit.slice(0, 10) })}</p>}
         <p className="text-xs font-bold text-amber-300">
           {t('pick.count', { n: myCartelas.length, max: maxCartelas })}
           {room.stake > 0 && myCartelas.length > 0 ? ` · ${t('pick.staked', { amount: etb(myCartelas.length * room.stake) })}` : ''}
@@ -763,7 +796,7 @@ function PickScreen({ room, cards, theme, myCartelas, maxCartelas, myId, busy, s
           <p className="font-black text-slate-100 text-xs">{t('pick.pickedList', { n: room.ready })}</p>
           {room.players.filter((p) => p.cartelas?.length).map((p) => (
             <p key={p.id} className="truncate">
-              <span className={`inline-block min-w-7 px-1 text-center rounded font-black ${p.id === myId ? 'bg-lime-400 text-ink-950' : 'bg-rose-700 text-white'}`}>{p.cartelas.join(' ')}</span> {p.name}
+              <span className={`inline-block min-w-7 px-1 text-center rounded font-black ${p.id === myId ? 'bg-lime-400 text-ink-950' : 'bg-rose-700 text-white'}`}>{p.cartelas.join(' ')}</span> {p.demo ? '🤖 ' : ''}{p.name}
               {p.id === myId ? ` ${t('pick.you')}` : ''}
             </p>
           ))}
@@ -923,7 +956,7 @@ function WinModal({ over, myId, onAgain, onLeave }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 px-6 animate-fade-in">
       <div role="dialog" aria-modal="true" className="w-full max-w-xs rounded-3xl bg-ink-800 border border-aqua-400/40 p-5 text-center shadow-2xl animate-modal-in">
-        <h2 className="text-lg font-black text-amber-300 mb-3">{w ? t('win.won', { name: w.name }) : t('win.none')}</h2>
+        <h2 className="text-lg font-black text-amber-300 mb-3">{w ? t('win.won', { name: w.name }) : t('win.none')}{w?.demo ? ' 🤖' : ''}</h2>
         {w && (
           <>
             <p className="inline-block rounded-lg bg-ink-700 px-3 py-1 font-black text-amber-300 text-lg">{w.name}</p>

@@ -4,6 +4,7 @@ import Wallet from './components/Wallet.jsx';
 import Profile from './components/Profile.jsx';
 import Missions from './components/Missions.jsx';
 import Shop from './components/Shop.jsx';
+import History from './components/History.jsx';
 import Transfer from './components/Transfer.jsx';
 import Splash from './components/Splash.jsx';
 
@@ -12,7 +13,7 @@ const SPLASH_MS = 900;
 import { useTelegram } from './hooks/useTelegram.js';
 import { useT, tError } from './lib/i18n.js';
 
-const SCREENS = ['play', 'wallet', 'transfer', 'profile', 'missions', 'shop'];
+const SCREENS = ['play', 'wallet', 'transfer', 'profile', 'missions', 'shop', 'history'];
 
 /** Which screen a launch link asked for (the bot opens ?screen=wallet, ?screen=profile, …). */
 function requestedScreen() {
@@ -84,6 +85,8 @@ function otherScreen(screen, { user, onNav, haptic, walletHint }) {
       return <Transfer onNav={onNav} haptic={haptic} />;
     case 'missions':
       return <Missions onNav={onNav} haptic={haptic} />;
+    case 'history':
+      return <History onNav={onNav} />;
     case 'shop':
       return <Shop onNav={onNav} haptic={haptic} />;
     case 'profile':
